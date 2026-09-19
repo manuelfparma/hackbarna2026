@@ -13,7 +13,7 @@ from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.graph import END, StateGraph
 from langgraph.types import Command, interrupt
 
-from agent.sugagents.recommender import Recommender
+from agent.nodes.recommender import Recommender
 
 
 class State(TypedDict):
