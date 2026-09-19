@@ -9,6 +9,7 @@ dependencies = [
     "fastapi>=0.121.2",
     "kaggle>=2.2.4",
     "langchain-mistralai>=1.1.6",
+    "langchain-openai>=1.6.2",
     "langgraph>=1.2.11",
     "pandas>=3.0.6",
     "pyarrow>=25.0.1",
