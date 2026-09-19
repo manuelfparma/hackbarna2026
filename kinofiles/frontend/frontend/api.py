@@ -64,6 +64,7 @@ def chat_with_agent(req: ChatRequest):
                 "waiting_for_input",
                 pending["text"],
                 options=pending["options"],
+                participant=pending.get("participant"),
             )
 
         if "farewell" in event:
