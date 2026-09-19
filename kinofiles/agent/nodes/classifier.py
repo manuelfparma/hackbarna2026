@@ -11,14 +11,14 @@ PROMPT = """You are the router for a movie assistant. Classify the message into 
 - theme_recommendation: the user wants suggestions based on mood, vibe, topic, or thematic content (e.g. "melancholy family stories", "coming of age", "movies about grief", "something with found family"). Prefer this over recommendation whenever the ask is about themes rather than a generic "recommend a movie".
 - recommendation: the user wants movie suggestions but did not describe themes, mood, or topic (e.g. "recommend me a film", "what's good to watch").
 - feedback: the user is reacting to recommendations already given (likes, dislikes, or asks to change them).
-- direct_request: the user asks for movies by a specific attribute (e.g. director, actors, genres, studios, themes, languages).
+- direct_request: the user asks for movies by a specific attribute or title (e.g. name, director, actors, genres, studios, languages).
 - social: greetings, thanks, small talk, or anything unrelated to movies.
 
 Message: {request}
 
 Return a JSON object with the following keys:
 - "intent": exactly one of "theme_recommendation", "recommendation", "feedback", "direct_request", "social"
-- "column": if intent is "direct_request", the attribute to filter by (one of "directors", "actors", "genres", "studios", "themes", "languages"). Otherwise, null.
+- "column": if intent is "direct_request", the attribute to filter by (one of "name", "directors", "actors", "genres", "studios", "languages"). Otherwise, null.
 - "value": if intent is "direct_request", the exact value to search for. Otherwise, null.
 
 Example 1:

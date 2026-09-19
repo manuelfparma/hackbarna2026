@@ -28,8 +28,13 @@ class DirectRequestHandler:
             return "Database connection is not configured."
 
         try:
-            res = self.supabase.table("movies").select("id, name").contains(column, [value]).limit(5).execute()
+            # Search 'name' directly, otherwise use the generated '_text' column
+            search_column = column if column == "name" else f"{column}_text"
+            
+            # Fuzzy match using ILIKE
+            res = self.supabase.table("movies").select("id, name").ilike(search_column, f"%{value}%").limit(5).execute()
             movies = res.data
+            
             if not movies:
                 return f"I couldn't find any movies for {column}: '{value}'."
             
