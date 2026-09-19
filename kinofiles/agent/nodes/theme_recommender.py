@@ -96,7 +96,7 @@ class ThemeRecommender:
         # handful of weaker ones, otherwise broad blockbusters always win.
         weights = {row["theme"]: 1 / rank for rank, row in enumerate(kept, start=1)}
 
-        movie_query = supabase.table("movies").select("name, rating, themes")
+        movie_query = supabase.table("movies").select("name, rating, themes, description")
         if genres:
             movie_query = movie_query.contains("genres", genres)
         try:
@@ -118,16 +118,16 @@ class ThemeRecommender:
                 "genres": genres,
                 "error": f"I couldn't find {label} movies matching those themes.",
             }
-        scored: list[tuple[float, float, str, list[str]]] = []
+        scored: list[tuple[float, float, str, list[str], str]] = []
         for movie in movies:
             hit = sorted(set(movie.get("themes") or []).intersection(weights))
             if hit:
                 score = sum(weights[theme] for theme in hit)
-                scored.append((score, movie.get("rating") or 0.0, movie["name"], hit))
+                scored.append((score, movie.get("rating") or 0.0, movie["name"], hit, movie.get("description", "")))
         # Ties on theme overlap are common, so the better-rated film wins.
         scored.sort(key=lambda item: (-item[0], -item[1], item[2]))
         top = scored[:MOVIE_LIMIT]
-        titles = [name for _, _, name, _ in top]
+        titles = [name for _, _, name, _, _ in top]
         if not titles:
             label = " + ".join(genres) if genres else "those constraints"
             return {
@@ -142,7 +142,8 @@ class ThemeRecommender:
             "titles": titles,
             "themes": [row["theme"] for row in kept],
             "genres": genres,
-            "matches": {name: hit for _, _, name, hit in top},
+            "matches": {name: hit for _, _, name, hit, _ in top},
+            "descriptions": {name: desc for _, _, name, _, desc in top},
             "error": None,
         }
 
@@ -215,7 +216,25 @@ class ThemeRecommender:
             }
             candidates = [row for row in candidates if row["movie_id"] in allowed]
 
-        titles = [row["name"] for row in candidates[:MOVIE_LIMIT]]
+        top = candidates[:MOVIE_LIMIT]
+        titles = [row["name"] for row in top]
+        
+        descriptions = {}
+        if top:
+            ids_to_fetch = [row["movie_id"] for row in top]
+            try:
+                rows = (
+                    supabase.table("movies")
+                    .select("name, description")
+                    .in_("id", ids_to_fetch)
+                    .execute()
+                    .data
+                    or []
+                )
+                descriptions = {r["name"]: r.get("description", "") for r in rows}
+            except Exception:
+                pass
+                
         if not titles:
             label = " + ".join(genres) if genres else "those constraints"
             return {
@@ -230,5 +249,6 @@ class ThemeRecommender:
             "titles": titles,
             "seed": seed["name"],
             "genres": genres,
+            "descriptions": descriptions,
             "error": None,
         }

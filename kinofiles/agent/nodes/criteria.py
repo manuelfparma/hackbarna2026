@@ -169,3 +169,51 @@ def build_theme_query(request: str, criteria: dict | None) -> str:
         if movie.get("role") in {"seed", "liked"}
     )
     return "; ".join(_dedupe([part for part in parts if part]))
+
+
+def merge_group_criteria(per_person: dict[str, dict]) -> tuple[dict, str]:
+    """Merge N people's normalized criteria into one brief.
+    
+    Returns (merged_criteria, compromise_notes).
+    
+    Strategy:
+    - Genres: intersection if non-empty, else union (relaxed match)
+    - Themes: union (cast a wide net)
+    - Directors/actors and others: union (any match counts)
+    - Movies (seeds): all kept
+    """
+    if not per_person:
+        return empty_criteria(), "No preferences provided."
+        
+    normalized_per_person = {name: normalize_criteria(crit) for name, crit in per_person.items()}
+
+    merged = empty_criteria()
+    
+    all_genres_sets = []
+    for name, crit in normalized_per_person.items():
+        if crit.get("genres"):
+            all_genres_sets.append(set(crit["genres"]))
+
+    if all_genres_sets:
+        intersect = set.intersection(*all_genres_sets)
+        if intersect:
+            merged["genres"] = list(intersect)
+            genre_note = f"Found common genres: {', '.join(intersect)}."
+        else:
+            union = set.union(*all_genres_sets)
+            merged["genres"] = list(union)
+            genre_note = f"Combined different genre preferences: {', '.join(union)}."
+    else:
+        genre_note = "No specific genre constraints."
+
+    for field in CRITERIA_FIELDS:
+        if field == "genres":
+            continue
+        all_vals = []
+        for crit in normalized_per_person.values():
+            all_vals.extend(crit.get(field) or [])
+        merged[field] = _dedupe(all_vals)
+
+    notes = f"Merged preferences for {len(per_person)} people. {genre_note}"
+    return merged, notes
+
