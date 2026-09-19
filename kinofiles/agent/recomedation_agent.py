@@ -310,7 +310,7 @@ class RecommendationAgent:
         text = state.get("response") or ""
         show_options = state.get("show_options", False) and bool(movies)
 
-        answer = interrupt(prompt(text, movies if show_options else [])).strip()
+        answer = interrupt(prompt(text, movies if show_options else [], criteria=state.get("search_criteria", {}))).strip()
 
         if movies and answer.isdigit() and 1 <= int(answer) <= len(movies):
             choice = movies[int(answer) - 1]

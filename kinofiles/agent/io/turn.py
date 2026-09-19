@@ -11,6 +11,6 @@ neither can own this helper without the other importing it in a circle.
 """
 
 
-def prompt(text: str, options: list[str] | None = None) -> dict:
+def prompt(text: str, options: list[str] | None = None, criteria: dict | None = None) -> dict:
     """Build the payload an `interrupt()` hands back to the caller."""
-    return {"text": text, "options": options or []}
+    return {"text": text, "options": options or [], "criteria": criteria or {}}
