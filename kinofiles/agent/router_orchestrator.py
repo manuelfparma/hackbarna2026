@@ -8,9 +8,9 @@ drives the conversation turn by turn, reusing the same thread_id so state
 (feedback, last recommendations) persists across calls.
 """
 
-import os
 from typing import TypedDict
 
+from agent.llm import build_llm
 from agent.nodes.classifier import Classifier
 from agent.nodes.direct_request import DirectRequestHandler
 from agent.nodes.feedback import FeedbackHandler
@@ -18,7 +18,6 @@ from agent.nodes.recommender import Recommender
 from agent.nodes.social import SocialHandler
 from agent.nodes.theme_recommender import ThemeRecommender
 from dotenv import load_dotenv
-from langchain_mistralai import ChatMistralAI
 from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.graph import END, StateGraph
 from langgraph.types import Command
@@ -36,16 +35,7 @@ class State(TypedDict):
 
 class RecommendationAgent:
     def __init__(self, llm=None):
-        api_key = os.environ.get("MISTRAL_API_KEY")
-        endpoint = os.environ.get("MISTRAL_ENDPOINT")
-        model = os.environ.get("MISTRAL_MODEL", "ministral-8b-2512")
-        
-        self.llm = llm or ChatMistralAI(
-            model=model,
-            temperature=0,
-            mistral_api_key=api_key,
-            endpoint=endpoint,
-        )
+        self.llm = llm or build_llm()
         self.classifier = Classifier(self.llm)
         self.recommender = Recommender(self.llm)
         self.theme_recommender = ThemeRecommender(self.llm)

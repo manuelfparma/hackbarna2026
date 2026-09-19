@@ -5,16 +5,15 @@ The input node is plain text for now; later it gets replaced by other I/O
 subagents.
 """
 
-import os
 from typing import TypedDict
 from dotenv import load_dotenv
 
-from langchain_mistralai import ChatMistralAI
 from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.graph import END, StateGraph
 from langgraph.types import Command, interrupt
 
-from agent.sugagents.recommender import Recommender
+from agent.llm import build_llm
+from agent.nodes.recommender import Recommender
 
 
 class State(TypedDict):
@@ -38,16 +37,7 @@ def prompt(text: str, options: list[str] | None = None) -> dict:
 
 class OrquestratorAgent:
     def __init__(self, llm=None):
-        api_key = os.environ.get("MISTRAL_API_KEY")
-        endpoint = os.environ.get("MISTRAL_ENDPOINT")
-        model = os.environ.get("MISTRAL_MODEL", "ministral-8b-2512")
-        
-        self.llm = llm or ChatMistralAI(
-            model=model,
-            temperature=0,
-            mistral_api_key=api_key,
-            endpoint=endpoint,
-        )
+        self.llm = llm or build_llm()
         self.recommender = Recommender(self.llm)
         self.graph = self._build_graph()
 

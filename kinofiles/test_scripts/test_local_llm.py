@@ -8,7 +8,7 @@ load_dotenv()  # Ensures .env is loaded
 from agent.router_orchestrator import RecommendationAgent
 
 def test_direct_request():
-    print("Initializing router orchestrator with local Ollama...")
+    print("Initializing router orchestrator (Nebius)...")
     agent = RecommendationAgent()
     
     print("\nOrchestrator ready! Type 'exit' or 'quit' to stop.")
