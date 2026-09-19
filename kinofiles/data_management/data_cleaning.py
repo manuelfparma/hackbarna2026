@@ -27,7 +27,8 @@ def download_data(output_dir="data"):
         "crew.csv",
         "actors.csv",
         "studios.csv",
-        "languages.csv"
+        "languages.csv",
+        "posters.csv"
     ]
     
     os.makedirs(output_dir, exist_ok=True)
@@ -90,6 +91,10 @@ def build_movie_dataset(data_dir="data"):
     # Filter for only the primary language (can be labeled as 'Language' or 'Primary language')
     languages = languages[languages['type'].isin(['Language', 'Primary language'])]
     
+    posters = pd.read_csv(os.path.join(data_dir, "posters.csv"))
+    posters = posters[posters['id'].isin(top_ids)]
+    posters = posters.rename(columns={'link': 'poster'})
+    
     print("Aggregating metadata...")
     # Get directors from crew
     directors = crew[crew['role'] == 'Director']
@@ -107,7 +112,7 @@ def build_movie_dataset(data_dir="data"):
     
     print("Merging data...")
     merged = movies
-    for df in [genres_agg, themes_agg, studios_agg, langs_agg, top_actors, directors_agg]:
+    for df in [genres_agg, themes_agg, studios_agg, langs_agg, top_actors, directors_agg, posters]:
         merged = merged.merge(df, on='id', how='left')
         
     # Convert floats to integers for cleaner JSON output
@@ -128,7 +133,7 @@ def build_movie_dataset(data_dir="data"):
     # Select only the final list of columns specified by the user
     final_columns = [
         'id', 'name', 'date', 'tagline', 'description', 'minute', 'duration_category', 'rating',
-        'genres', 'themes', 'studios', 'languages', 'actors', 'directors'
+        'genres', 'themes', 'studios', 'languages', 'actors', 'directors', 'poster'
     ]
     merged = merged[final_columns]
         
