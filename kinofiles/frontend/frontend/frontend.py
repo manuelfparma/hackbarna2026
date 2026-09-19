@@ -36,6 +36,13 @@ class AgentState(rx.State):
     selected: str = ""
     is_done: bool = False
     search_criteria: dict = {}
+    voice_enabled: bool = True
+
+    def toggle_voice(self):
+        self.voice_enabled = not self.voice_enabled
+
+    def close_player(self):
+        self.is_done = False
 
     def set_current_input(self, val: str):
         self.current_input = val
@@ -169,9 +176,14 @@ class AgentState(rx.State):
                 continue
             if isinstance(v, list):
                 for item in v:
-                    badges.append(f"{item}")
+                    if isinstance(item, dict) and "title" in item:
+                        badges.append(item["title"])
+                    else:
+                        badges.append(str(item))
+            elif isinstance(v, dict) and "title" in v:
+                badges.append(v["title"])
             else:
-                badges.append(f"{k}: {v}")
+                badges.append(str(v))
         return badges
 
     @rx.var
@@ -205,13 +217,15 @@ class AgentState(rx.State):
             )
             if message is not None:
                 self.messages.append({"role": "agent", "content": data.get("reply", "")})
-                audio_b64 = data.get("audio")
+                if self.voice_enabled:
+                    audio_b64 = data.get("audio")
             else:
                 import base64
                 from .api import tts
                 greeting = f"Hey {self.current_name}, what do you feel like watching?"
-                audio_bytes = await asyncio.to_thread(tts.synthesize, greeting)
-                audio_b64 = base64.b64encode(audio_bytes).decode()
+                if self.voice_enabled:
+                    audio_bytes = await asyncio.to_thread(tts.synthesize, greeting)
+                    audio_b64 = base64.b64encode(audio_bytes).decode()
 
             # Options are the films on offer; a choice means the agent has
             # settled on one, so it takes the spotlight.
@@ -435,6 +449,10 @@ GLOBAL_CSS = """
     0%, 100% { opacity: 1; }
     50% { opacity: 0.5; }
   }
+  @keyframes fade-out-delayed {
+    0%, 70% { opacity: 1; }
+    100% { opacity: 0; display: none; }
+  }
   .rail::-webkit-scrollbar { display: none; }
   .rail { scrollbar-width: none; -ms-overflow-style: none; }
 </style>
@@ -636,6 +654,34 @@ def mic_button() -> rx.Component:
             SHADOW_SM,
         ),
         on_click=rx.call_script(TOGGLE_RECORDING_JS, callback=AgentState.handle_voice),
+        _hover={"transform": "scale(1.06)"},
+        transition="all .2s ease",
+    )
+
+
+def voice_toggle_button() -> rx.Component:
+    return rx.box(
+        rx.center(
+            rx.cond(
+                AgentState.voice_enabled,
+                rx.icon("volume-2", size=18, color="white"),
+                rx.icon("volume-x", size=18, color="white"),
+            ),
+            width="100%",
+            height="100%",
+        ),
+        width="48px",
+        height="48px",
+        border_radius="50%",
+        border=f"4px solid {SURFACE}",
+        bg=rx.cond(AgentState.voice_enabled, MUTED, FAINT),
+        cursor="pointer",
+        position="absolute",
+        right="2rem",
+        bottom="6.6rem",
+        z_index="10",
+        box_shadow=SHADOW_SM,
+        on_click=AgentState.toggle_voice,
         _hover={"transform": "scale(1.06)"},
         transition="all .2s ease",
     )
@@ -883,6 +929,7 @@ def movie_rail() -> rx.Component:
             width="100%",
         ),
         mic_button(),
+        voice_toggle_button(),
         padding="1.3rem 1.4rem",
         width="100%",
         flex_shrink="0",
@@ -917,6 +964,7 @@ def empty_rail() -> rx.Component:
             align="center",
         ),
         mic_button(),
+        voice_toggle_button(),
         display="flex",
         align_items="center",
         justify_content="flex-start",
@@ -930,6 +978,7 @@ def empty_rail() -> rx.Component:
 def fake_player() -> rx.Component:
     """A fake full-screen video player that appears when a movie is chosen."""
     return rx.box(
+        # Background: blurred poster
         rx.box(
             rx.cond(
                 AgentState.selected_poster != "",
@@ -940,40 +989,45 @@ def fake_player() -> rx.Component:
                     width="100%",
                     height="100%",
                     object_fit="cover",
-                    opacity="0.2",
+                    opacity="0.3",
                     filter="blur(20px)",
                 ),
                 rx.box()
             ),
-            rx.center(
-                rx.vstack(
-                    rx.icon("play", size=80, color="white", opacity="0.9"),
-                    rx.heading(AgentState.selected, size="8", color="white", margin_top="1rem", text_align="center"),
-                    rx.text("Now Playing", font_size="1.2rem", color="rgba(255,255,255,0.6)", text_transform="uppercase", letter_spacing="0.1em"),
-                    spacing="3",
-                    align="center",
-                    z_index="1",
-                ),
-                width="100%",
-                height="100%",
+            position="absolute",
+            inset="0",
+            z_index="0",
+        ),
+        # Center content: Spinner and Title
+        rx.center(
+            rx.vstack(
+                rx.spinner(size="3", color="white"),
+                rx.heading(AgentState.selected, size="8", color="white", margin_top="1rem", text_align="center"),
+                rx.text("LOADING MOVIE...", font_size="1.2rem", color="rgba(255,255,255,0.7)", text_transform="uppercase", letter_spacing="0.1em"),
+                spacing="3",
+                align="center",
+                z_index="1",
             ),
-            rx.icon(
-                "x",
-                size=30,
-                color="white",
-                position="absolute",
-                top="2rem",
-                right="3rem",
-                cursor="pointer",
-                z_index="2",
-                on_click=AgentState.set_is_done(False),
-                opacity="0.6",
-                _hover={"opacity": "1"}
-            ),
-            position="relative",
             width="100%",
             height="100%",
-            overflow="hidden",
+        ),
+        # Close button
+        rx.icon(
+            "x",
+            size=30,
+            color="white",
+            position="absolute",
+            top="2rem",
+            right="3rem",
+            cursor="pointer",
+            z_index="2",
+            on_click=AgentState.close_player,
+            opacity="0.6",
+            _hover={"opacity": "1", "transform": "scale(1.1)"},
+            bg="rgba(0,0,0,0.4)",
+            border_radius="50%",
+            padding="4px",
+            transition="all 0.2s ease"
         ),
         position="fixed",
         inset="0",
