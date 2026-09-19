@@ -40,6 +40,7 @@ class State(TypedDict):
     intent: str
     column: str | None
     value: str | None
+    entities: dict
     feedback: list[str]
     movies: list[str]
     response: str

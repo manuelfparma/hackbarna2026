@@ -14,7 +14,8 @@ CREATE TABLE IF NOT EXISTS movies (
     studios TEXT[] DEFAULT '{}',
     languages TEXT[] DEFAULT '{}',
     actors TEXT[] DEFAULT '{}',
-    directors TEXT[] DEFAULT '{}'
+    directors TEXT[] DEFAULT '{}',
+    poster TEXT
 );
 
 -- Create GIN indexes on array columns for fast filtering using @> or ANY
