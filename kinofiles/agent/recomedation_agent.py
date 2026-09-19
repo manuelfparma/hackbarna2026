@@ -19,6 +19,7 @@ Two consequences for whoever embeds this as a subgraph:
   flags) in its own schema or lose it.
 """
 
+import logging
 from typing import TypedDict
 
 from agent.io.turn import prompt
@@ -42,6 +43,13 @@ from langgraph.types import Command, interrupt
 # Distinguishes "caller said nothing" from an explicit `checkpointer=None`,
 # which is how a parent graph asks to lend this one its own.
 _OWN_CHECKPOINTER = object()
+
+logger = logging.getLogger(__name__)
+
+
+def _compact(value: dict | None) -> dict:
+    """Drop empty fields so log lines only show what the turn extracted."""
+    return {key: item for key, item in (value or {}).items() if item}
 
 
 class State(TypedDict):
@@ -122,6 +130,15 @@ class RecommendationAgent:
         )
         route = self._route_for_criteria(intent, entities, criteria)
         column, value = result.as_filter()
+        logger.info(
+            "request=%r | intent=%s | action=%s | route=%s | entities=%s | criteria=%s",
+            state["request"],
+            intent,
+            action,
+            route,
+            _compact(entities),
+            _compact(criteria),
+        )
         return Command(
             goto=route,
             update={
@@ -251,6 +268,13 @@ class RecommendationAgent:
 
     def reply(self, state: State) -> State:
         """Compose the only user-facing prose produced by capability turns."""
+        result = state.get("result", {})
+        logger.info(
+            "result | kind=%s | titles=%s | error=%s",
+            result.get("kind"),
+            result.get("titles"),
+            result.get("error"),
+        )
         response = self.reply_composer.compose(
             request=state["request"],
             intent=state["intent"],
@@ -289,7 +313,9 @@ class RecommendationAgent:
         answer = interrupt(prompt(text, movies if show_options else [])).strip()
 
         if movies and answer.isdigit() and 1 <= int(answer) <= len(movies):
-            return Command(goto=END, update={"choice": movies[int(answer) - 1]})
+            choice = movies[int(answer) - 1]
+            logger.info("pick | choice=%r", choice)
+            return Command(goto=END, update={"choice": choice})
         return Command(goto="classify", update={"request": answer, "response": ""})
 
     def run(self, request: str, thread_id: str = "1") -> str:
@@ -322,6 +348,9 @@ class RecommendationAgent:
 
 if __name__ == "__main__":
     load_dotenv()
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s | %(message)s")
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+    logging.getLogger("httpx2").setLevel(logging.WARNING)
     agent = RecommendationAgent()
     while True:
         text = input("> ")
