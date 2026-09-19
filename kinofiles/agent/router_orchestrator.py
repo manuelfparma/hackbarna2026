@@ -63,13 +63,11 @@ class RecommendationAgent:
     def classify(self, state: State) -> Command:
         """First layer: decide which node should handle this message."""
         intent = self.classifier.classify(state["request"])
-        return Command(goto=intent, update={"intent": intent})
+        return Command(goto=intent, update={"intent": intent, "response": ""})
 
     def theme_recommendation(self, state: State) -> State:
         """Movie suggestions via nearest theme embeddings."""
-        movies, response = self.theme_recommender.recommend(
-            state["request"], state.get("feedback", [])
-        )
+        movies, response = self.theme_recommender.recommend(state["request"], state.get("feedback", []))
         return {"movies": movies, "response": response}
 
     def recommendation(self, state: State) -> State:

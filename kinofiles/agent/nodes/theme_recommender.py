@@ -5,21 +5,30 @@ from langchain_mistralai import MistralAIEmbeddings
 
 MATCH_COUNT = 10
 MOVIE_LIMIT = 5
+SIMILARITY_MARGIN = 0.10
 
 
 class ThemeRecommender:
     def __init__(self, llm=None):
         self.llm = llm
+        self._supabase = None
+        self._embeddings = None
+
+    def _connect(self):
+        if self._supabase is None:
+            _load_env()
+            self._supabase = _client()
+            self._embeddings = MistralAIEmbeddings(model=EMBEDDING_MODEL)
+        return self._supabase
 
     def recommend(self, request: str, feedback: list[str] | None = None) -> tuple[list[str], str]:
         """Return (movie titles, user-facing reply) from theme similarity search."""
         del feedback
-        _load_env()
-        supabase = _client()
+        supabase = self._connect()
         if supabase is None:
             return [], "Could not connect to the movie database."
 
-        vector = MistralAIEmbeddings(model=EMBEDDING_MODEL).embed_query(request)
+        vector = self._embeddings.embed_query(request)
         try:
             matches = (
                 supabase.rpc(
@@ -36,22 +45,29 @@ class ThemeRecommender:
         if not matches:
             return [], "I could not find matching themes for that request."
 
-        theme_names = [row["theme"] for row in matches]
-        movies = supabase.table("movies").select("name, themes").execute().data or []
-        scored: list[tuple[int, str, list[str]]] = []
+        cutoff = matches[0]["similarity"] - SIMILARITY_MARGIN
+        kept = [row for row in matches if row["similarity"] >= cutoff]
+
+        # Reciprocal rank: matching the closest theme outweighs matching a
+        # handful of weaker ones, otherwise broad blockbusters always win.
+        weights = {row["theme"]: 1 / rank for rank, row in enumerate(kept, start=1)}
+
+        movies = supabase.table("movies").select("name, rating, themes").execute().data or []
+        scored: list[tuple[float, float, str, list[str]]] = []
         for movie in movies:
-            hit = set(movie.get("themes") or []).intersection(theme_names)
+            hit = sorted(set(movie.get("themes") or []).intersection(weights))
             if hit:
-                scored.append((len(hit), movie["name"], sorted(hit)))
-        scored.sort(key=lambda item: (-item[0], item[1]))
+                score = sum(weights[theme] for theme in hit)
+                scored.append((score, movie.get("rating") or 0.0, movie["name"], hit))
+        # Ties on theme overlap are common, so the better-rated film wins.
+        scored.sort(key=lambda item: (-item[0], -item[1], item[2]))
         top = scored[:MOVIE_LIMIT]
-        titles = [name for _, name, _ in top]
+        titles = [name for _, _, name, _ in top]
 
         lines = ["Closest themes:"]
-        for row in matches:
-            lines.append(f"- {row['theme']}")
+        lines += [f"- {row['theme']} ({row['similarity']:.3f})" for row in kept]
         lines.append("")
         lines.append("Movies with the most matching themes:")
-        for count, name, hit in top:
-            lines.append(f"- {name} ({count}: {', '.join(hit)})")
+        for score, rating, name, hit in top:
+            lines.append(f"- {name} [{rating:.1f}] ({score:.2f}: {', '.join(hit)})")
         return titles, "\n".join(lines)
