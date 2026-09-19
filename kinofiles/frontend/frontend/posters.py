@@ -5,7 +5,7 @@ from dotenv import load_dotenv
 from supabase import create_client
 
 # Load environment variables (from kinofiles root)
-load_dotenv(os.path.join(os.path.dirname(__file__), "../../../.env"))
+load_dotenv(os.path.join(os.path.dirname(__file__), "../../.env"))
 url = os.environ.get("SUPABASE_URL", "https://wbocilfhiuydyjytsukj.supabase.co")
 key = os.environ.get("SUPABASE_SERVICE_KEY") or os.environ.get("SUPABASE_KEY", "")
 
