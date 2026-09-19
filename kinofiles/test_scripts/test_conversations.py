@@ -8,6 +8,7 @@ internal state that produced it, so routing decisions are visible.
 Usage (from kinofiles/):  uv run python test_scripts/test_conversations.py
 """
 
+import logging
 import os
 import sys
 
@@ -16,6 +17,9 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from dotenv import load_dotenv
 
 load_dotenv()
+logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s | %(message)s")
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("httpx2").setLevel(logging.WARNING)
 
 from langgraph.types import Command
 
