@@ -1,76 +1,124 @@
-"""Intent classifier subagent: a single LLM call.
+"""Intent classifier: structured LLM output with named entities."""
 
-First layer of the router agent: decides which node should handle the
-incoming message and extracts relevant search fields if it's a direct request.
-"""
+from typing import Literal
 
-import json
+from langchain_core.messages import HumanMessage, SystemMessage
+from pydantic import BaseModel, Field
 
-PROMPT = """You are the router for a movie assistant. Classify the message into exactly one category:
-
-- theme_recommendation: the user wants suggestions based on mood, vibe, topic, or thematic content (e.g. "melancholy family stories", "coming of age", "movies about grief", "something with found family"). Prefer this over recommendation whenever the ask is about themes rather than a generic "recommend a movie".
-- recommendation: the user wants movie suggestions but did not describe themes, mood, or topic (e.g. "recommend me a film", "what's good to watch").
-- feedback: the user is reacting to recommendations already given (likes, dislikes, or asks to change them).
-- direct_request: the user asks for movies by a specific attribute (e.g. director, actors, genres, studios, themes, languages).
-- social: greetings, thanks, small talk, or anything unrelated to movies.
-
-Message: {request}
-
-Return a JSON object with the following keys:
-- "intent": exactly one of "theme_recommendation", "recommendation", "feedback", "direct_request", "social"
-- "column": if intent is "direct_request", the attribute to filter by (one of "directors", "actors", "genres", "studios", "themes", "languages"). Otherwise, null.
-- "value": if intent is "direct_request", the exact value to search for. Otherwise, null.
-
-Example 1:
-Message: What movies did Christopher Nolan direct?
-Answer: {{"intent": "direct_request", "column": "directors", "value": "Christopher Nolan"}}
-
-Example 2:
-Message: Show me some Comedy movies.
-Answer: {{"intent": "direct_request", "column": "genres", "value": "Comedy"}}
-
-Example 3:
-Message: I feel like watching something funny.
-Answer: {{"intent": "theme_recommendation", "column": null, "value": null}}
-
-Answer:"""
-
-INTENTS = {
+Intent = Literal[
     "theme_recommendation",
     "recommendation",
     "feedback",
     "direct_request",
     "social",
-}
+]
+
+MovieRole = Literal["seed", "liked", "seen", "wanted", "asked_about"]
+
+# Catalog array columns only. Free-text `themes` (moods) are not filter values.
+FILTER_COLUMNS = (
+    "directors",
+    "actors",
+    "genres",
+    "studios",
+    "languages",
+)
+
+SYSTEM_PROMPT = """You are the router for a movie assistant.
+Classify the user message into exactly one intent, and extract every named
+entity that could be used later for catalog lookup or similar-to search.
+
+Intents:
+- theme_recommendation: suggestions based on mood, vibe, topic, or thematic
+  content (e.g. "melancholy family stories", "coming of age", "movies about grief").
+  Prefer this over recommendation when the ask is about themes rather than a
+  generic "recommend a movie".
+- recommendation: movie suggestions with no theme language, including
+  similar-to a named film ("a movie like Super Troopers") and open browse
+  ("what should I watch").
+- feedback: reacting to recommendations already given (likes, dislikes, change them).
+- direct_request: movies by a catalog attribute (director, actor, genre, studio,
+  language) or a fact about a named film.
+- social: greetings, thanks, small talk, or anything unrelated to movies.
+
+Entity rules:
+- Copy names as the user said them. Do not invent titles or people.
+- movies: each mentioned film. Use role seed for "like X" / similar-to,
+  liked / seen for taste, wanted for "I want to watch X", asked_about for
+  plot/quality questions. Include year only if the user said it.
+- genres: catalog-style labels when possible (Comedy, Horror, Action, Drama,
+  Science Fiction, Thriller, Romance, Animation, Documentary, Fantasy).
+- themes: free-text mood or topic phrases ("funny", "found family", "grief").
+- Leave lists empty when nothing was mentioned. Never guess."""
+
+
+class MovieMention(BaseModel):
+    """A film name mentioned in the utterance, not yet linked to the catalog."""
+
+    title: str = Field(description="Title as spoken, without @ids.")
+    year: int | None = Field(
+        default=None,
+        description="Release year if the user said it, otherwise null.",
+    )
+    role: MovieRole = Field(
+        default="seed",
+        description="How the title is used in this turn.",
+    )
+
+
+class Entities(BaseModel):
+    """Named entities for retrieval. All lists may be empty."""
+
+    movies: list[MovieMention] = Field(default_factory=list)
+    actors: list[str] = Field(default_factory=list)
+    directors: list[str] = Field(default_factory=list)
+    genres: list[str] = Field(default_factory=list)
+    themes: list[str] = Field(default_factory=list)
+    studios: list[str] = Field(default_factory=list)
+    languages: list[str] = Field(default_factory=list)
+    years: list[int] = Field(
+        default_factory=list,
+        description="Standalone years (not a movie's year field).",
+    )
+    time_periods: list[str] = Field(
+        default_factory=list,
+        description="e.g. 90s, classic, recent.",
+    )
+    audience: list[str] = Field(
+        default_factory=list,
+        description="e.g. kids, friends, family.",
+    )
+
+
+class Classification(BaseModel):
+    intent: Intent
+    entities: Entities = Field(default_factory=Entities)
+
+    def as_filter(self) -> tuple[str | None, str | None]:
+        """First catalog attribute for the existing direct_request node."""
+        for column in FILTER_COLUMNS:
+            values = getattr(self.entities, column)
+            if values:
+                return column, values[0]
+        return None, None
 
 
 class Classifier:
     def __init__(self, llm):
-        self.llm = llm
+        self.llm = llm.with_structured_output(Classification)
 
-    def classify(self, request: str) -> dict:
-        """Return a dict with intent, column, and value."""
-        answer = self.llm.invoke(PROMPT.format(request=request))
-        content = answer.content.strip()
-        
-        # Strip markdown block if present
-        if content.startswith("```json"):
-            content = content[7:]
-        elif content.startswith("```"):
-            content = content[3:]
-        if content.endswith("```"):
-            content = content[:-3]
-        content = content.strip()
-
+    def classify(self, request: str) -> Classification:
+        """Return intent plus extracted entities."""
         try:
-            data = json.loads(content)
-            intent = data.get("intent", "").strip().lower()
-            if intent not in INTENTS:
-                intent = "social"
-            return {
-                "intent": intent,
-                "column": data.get("column"),
-                "value": data.get("value")
-            }
-        except json.JSONDecodeError:
-            return {"intent": "social", "column": None, "value": None}
+            result = self.llm.invoke(
+                [
+                    SystemMessage(content=SYSTEM_PROMPT),
+                    HumanMessage(content=request),
+                ]
+            )
+        except Exception:
+            return Classification(intent="social")
+
+        if not isinstance(result, Classification):
+            return Classification(intent="social")
+        return result
