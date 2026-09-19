@@ -19,8 +19,8 @@ What stays at this layer is what no single capability can own:
   bolted into the recommender's classifier
 
 `State` is deliberately a superset of the subagent's: LangGraph only
-propagates keys the parent declares, so leaving out `response` or `intent`
-would silently discard everything the subagent generated.
+propagates keys the parent declares, so leaving out reply state such as
+`result`, `history`, or `response` would silently discard it.
 """
 
 from typing import TypedDict
@@ -41,19 +41,28 @@ class State(TypedDict):
     column: str | None
     value: str | None
     entities: dict
+    search_criteria: dict
     feedback: list[str]
     movies: list[str]
+    result: dict
+    history: list[dict[str, str]]
+    show_options: bool
     response: str
     choice: str
     farewell: str
 
 
 class OrquestratorAgent:
-    def __init__(self, llm=None):
+    def __init__(self, llm=None, reply_llm=None):
         self.llm = llm or build_llm()
+        self.reply_llm = reply_llm or (
+            llm if llm is not None else build_llm(temperature=0.4)
+        )
         # No checkpointer of its own: it borrows this graph's, so a resume
         # sent here reaches the interrupt waiting inside it.
-        self.recommendation_agent = RecommendationAgent(self.llm, checkpointer=None)
+        self.recommendation_agent = RecommendationAgent(
+            self.llm, reply_llm=self.reply_llm, checkpointer=None
+        )
         self.graph = self._build_graph()
 
     def _build_graph(self):
@@ -77,7 +86,16 @@ class OrquestratorAgent:
         knows what it still needs to know.
         """
         text = interrupt(prompt("What do you feel like watching?"))
-        return {"request": text, "feedback": [], "movies": [], "response": ""}
+        return {
+            "request": text,
+            "feedback": [],
+            "movies": [],
+            "search_criteria": {},
+            "result": {},
+            "history": [],
+            "show_options": False,
+            "response": "",
+        }
 
     def goodbye(self, state: State) -> State:
         """Close the session once the subagent reports a pick."""

@@ -14,6 +14,7 @@ Intent = Literal[
 ]
 
 MovieRole = Literal["seed", "liked", "seen", "wanted", "asked_about"]
+CriteriaAction = Literal["add", "replace", "reset", "keep"]
 
 # Catalog array columns only. Free-text `themes` (moods) are not filter values.
 FILTER_COLUMNS = (
@@ -40,6 +41,15 @@ Intents:
 - direct_request: movies by a catalog attribute (director, actor, genre, studio,
   language) or a fact about a named film.
 - social: greetings, thanks, small talk, or anything unrelated to movies.
+
+Criteria action:
+- add: the user adds constraints using cues such as "also", "and", "with", or
+  "it should have". Example: "Also, it should have some action."
+- replace: the user changes direction using "instead" or "rather", or proposes
+  an unqualified new direction such as "What about a thriller?"
+- reset: the user explicitly says to start over, forget prior preferences, or
+  asks for something completely different.
+- keep: greetings, thanks, factual questions, and turns with no search change.
 
 Entity rules:
 - Copy names as the user said them. Do not invent titles or people.
@@ -93,6 +103,10 @@ class Entities(BaseModel):
 class Classification(BaseModel):
     intent: Intent
     entities: Entities = Field(default_factory=Entities)
+    criteria_action: CriteriaAction = Field(
+        default="add",
+        description="How this turn changes the accumulated movie-search criteria.",
+    )
 
     def as_filter(self) -> tuple[str | None, str | None]:
         """First catalog attribute for the existing direct_request node."""
@@ -117,8 +131,8 @@ class Classifier:
                 ]
             )
         except Exception:
-            return Classification(intent="social")
+            return Classification(intent="social", criteria_action="keep")
 
         if not isinstance(result, Classification):
-            return Classification(intent="social")
+            return Classification(intent="social", criteria_action="keep")
         return result
