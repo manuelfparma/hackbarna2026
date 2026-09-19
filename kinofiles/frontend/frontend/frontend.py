@@ -53,6 +53,19 @@ class AgentState(rx.State):
             self.thread_id = str(uuid.uuid4())
             return AgentState.start_agent
 
+    def open_tv_agent(self):
+        if not self.thread_id:
+            self.thread_id = str(uuid.uuid4())
+            return [rx.redirect("/agent"), AgentState.start_agent]
+        return rx.redirect("/agent")
+
+    @rx.var
+    def latest_message(self) -> str:
+        if not self.messages:
+            return "¡Hola! Soy tu agente de KinoFiles. ¿Qué te apetece ver hoy?"
+        return self.messages[-1]["content"]
+
+
     async def _turn(self, message: str | None):
         """Run one orchestrator turn and show its reply, narration included.
 
@@ -351,7 +364,7 @@ def hero() -> rx.Component:
             ),
             rx.button(
                 "Lanzar agente", 
-                on_click=AgentState.toggle_chat,
+                on_click=AgentState.open_tv_agent,
                 bg=titan_blue, 
                 color="white", 
                 font_size="1.1em",
@@ -497,3 +510,87 @@ app = rx.App(
     api_transformer=voice_api,
 )
 app.add_page(index, title="KinoFiles OS")
+
+
+def agent_tv_panel() -> rx.Component:
+    return rx.box(
+        rx.vstack(
+            # Back button
+            rx.hstack(
+                rx.icon("chevron-left", size=32, color="white", cursor="pointer", on_click=rx.redirect("/")),
+                rx.text("Volver", color="white", font_size="1.5em", cursor="pointer", on_click=rx.redirect("/")),
+                align_items="center",
+                width="100%",
+                padding_top="2em",
+                padding_left="2em",
+                position="absolute",
+                top="0",
+                left="0",
+            ),
+            
+            # Big text response
+            rx.text(
+                AgentState.latest_message,
+                font_size="3em",
+                font_weight="bold",
+                color="white",
+                max_width="80%",
+                text_align="center",
+                margin_top="10vh",
+                margin_bottom="2em",
+                min_height="150px",
+                line_height="1.2",
+            ),
+            
+            # Big record button
+            rx.button(
+                rx.cond(
+                    AgentState.is_recording,
+                    rx.hstack(rx.icon("square", size=48, color="white"), rx.text("Grabando...", font_size="2em", color="white"), spacing="4", align_items="center"),
+                    rx.hstack(rx.icon("mic", size=48, color="white"), rx.text("Hablar", font_size="2em", color="white"), spacing="4", align_items="center")
+                ),
+                on_click=rx.call_script(
+                    TOGGLE_RECORDING_JS,
+                    callback=AgentState.handle_voice,
+                ),
+                bg=rx.cond(AgentState.is_recording, "#d32f2f", titan_red),
+                padding="3em 5em",
+                border_radius="30px",
+                _hover={"bg": "#d32f2f", "transform": "scale(1.05)"},
+                transition="all 0.2s",
+                box_shadow="0 15px 30px rgba(0,0,0,0.5)",
+                margin_bottom="2em",
+            ),
+            
+            rx.cond(
+                AgentState.is_loading,
+                rx.spinner(color=titan_red, size="3"),
+                rx.box(height="40px") # spacer
+            ),
+            
+            # Recommendations (dummy posters)
+            rx.text("Recomendaciones", font_size="2em", color=text_muted, margin_top="2em", margin_bottom="1em"),
+            rx.hstack(
+                rx.image(src="https://dummyimage.com/300x450/176B9C/ffffff&text=Peli+1", height="350px", border_radius="15px", box_shadow="0 10px 20px rgba(0,0,0,0.6)"),
+                rx.image(src="https://dummyimage.com/300x450/F4434B/ffffff&text=Peli+2", height="350px", border_radius="15px", box_shadow="0 10px 20px rgba(0,0,0,0.6)"),
+                rx.image(src="https://dummyimage.com/300x450/333333/ffffff&text=Peli+3", height="350px", border_radius="15px", box_shadow="0 10px 20px rgba(0,0,0,0.6)"),
+                rx.image(src="https://dummyimage.com/300x450/111111/ffffff&text=Peli+4", height="350px", border_radius="15px", box_shadow="0 10px 20px rgba(0,0,0,0.6)"),
+                spacing="6",
+                overflow_x="auto",
+                width="90%",
+                padding_bottom="2em",
+                justify="center"
+            ),
+            
+            align_items="center",
+            width="100%",
+            height="100vh",
+        ),
+        bg=bg_dark,
+        height="100vh",
+        width="100vw",
+        overflow="hidden",
+        position="relative"
+    )
+
+app.add_page(agent_tv_panel, route="/agent", title="KinoFiles Agent TV")
