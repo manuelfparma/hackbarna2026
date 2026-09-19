@@ -35,4 +35,4 @@ while "__interrupt__" in event:
 
 ## Subagents
 
-`sugagents/recommender.py` holds the `Recommender` class, injected into `OrquestratorAgent` as `self.recommender`. It currently wraps a single LLM call (Mistral). When the team's search engine is ready, only its `recommend(request, feedback)` body needs to change — the signature stays the same.
+`sugagents/recommender.py` holds the `Recommender` class, injected into `OrquestratorAgent` as `self.recommender`. It currently wraps a single LLM call (Nebius, see `agent/llm.py`). When the team's search engine is ready, only its `recommend(request, feedback)` body needs to change — the signature stays the same.

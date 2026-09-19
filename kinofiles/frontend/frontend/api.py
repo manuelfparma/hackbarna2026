@@ -9,7 +9,7 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".
 from dotenv import load_dotenv
 
 # orchestrator.py only loads .env under __main__, so imported here the agent
-# would build its LLM client without MISTRAL_API_KEY and 401 on every call.
+# would build its LLM client without NEBIUS_API_KEY and fail on every call.
 load_dotenv(os.path.join(os.path.dirname(__file__), "..", "..", ".env"))
 
 from agent.orchestrator import OrquestratorAgent

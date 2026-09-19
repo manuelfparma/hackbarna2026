@@ -10,6 +10,7 @@ drives the conversation turn by turn, reusing the same thread_id so state
 
 from typing import TypedDict
 
+from agent.llm import build_llm
 from agent.nodes.classifier import Classifier
 from agent.nodes.direct_request import DirectRequestHandler
 from agent.nodes.feedback import FeedbackHandler
@@ -17,7 +18,6 @@ from agent.nodes.recommender import Recommender
 from agent.nodes.social import SocialHandler
 from agent.nodes.theme_recommender import ThemeRecommender
 from dotenv import load_dotenv
-from langchain_mistralai import ChatMistralAI
 from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.graph import END, StateGraph
 from langgraph.types import Command
@@ -26,6 +26,8 @@ from langgraph.types import Command
 class State(TypedDict):
     request: str
     intent: str
+    column: str | None
+    value: str | None
     feedback: list[str]
     movies: list[str]
     response: str
@@ -33,7 +35,7 @@ class State(TypedDict):
 
 class RecommendationAgent:
     def __init__(self, llm=None):
-        self.llm = llm or ChatMistralAI(model="ministral-8b-2512", temperature=0)
+        self.llm = llm or build_llm()
         self.classifier = Classifier(self.llm)
         self.recommender = Recommender(self.llm)
         self.theme_recommender = ThemeRecommender(self.llm)
@@ -62,8 +64,17 @@ class RecommendationAgent:
 
     def classify(self, state: State) -> Command:
         """First layer: decide which node should handle this message."""
-        intent = self.classifier.classify(state["request"])
-        return Command(goto=intent, update={"intent": intent, "response": ""})
+        result = self.classifier.classify(state["request"])
+        intent = result["intent"]
+        return Command(
+            goto=intent, 
+            update={
+                "intent": intent,
+                "column": result.get("column"),
+                "value": result.get("value"),
+                "response": ""
+            }
+        )
 
     def theme_recommendation(self, state: State) -> State:
         """Movie suggestions via nearest theme embeddings."""
@@ -83,8 +94,8 @@ class RecommendationAgent:
         return {"feedback": feedback, "movies": movies, "response": response}
 
     def direct_request(self, state: State) -> State:
-        """Answer a specific factual question about a movie."""
-        response = self.direct_request_handler.handle(state["request"])
+        """Process a direct request using the extracted column and value."""
+        response = self.direct_request_handler.handle(state.get("column"), state.get("value"))
         return {"response": response}
 
     def social(self, state: State) -> State:

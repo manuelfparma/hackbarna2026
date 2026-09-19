@@ -5,7 +5,7 @@ subagent, and `/api/agent/chat` (from `api.py`) drives the orchestrator and
 returns each reply with its narration. Reflex mounts this via
 `api_transformer`, so there is no second server process to run.
 
-Both handlers do blocking network I/O (SLNG, Mistral), so they hand that
+Both handlers do blocking network I/O (SLNG, Nebius), so they hand that
 work to a thread rather than stalling the event loop the websockets share.
 """
 

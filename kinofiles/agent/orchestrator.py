@@ -8,11 +8,11 @@ subagents.
 from typing import TypedDict
 from dotenv import load_dotenv
 
-from langchain_mistralai import ChatMistralAI
 from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.graph import END, StateGraph
 from langgraph.types import Command, interrupt
 
+from agent.llm import build_llm
 from agent.nodes.recommender import Recommender
 
 
@@ -37,7 +37,7 @@ def prompt(text: str, options: list[str] | None = None) -> dict:
 
 class OrquestratorAgent:
     def __init__(self, llm=None):
-        self.llm = llm or ChatMistralAI(model="ministral-8b-2512", temperature=0)
+        self.llm = llm or build_llm()
         self.recommender = Recommender(self.llm)
         self.graph = self._build_graph()
 
