@@ -520,7 +520,7 @@ def ambient() -> rx.Component:
 def status_bar(back: bool = False) -> rx.Component:
     """The TV chrome: who we are on the left, time and weather on the right."""
     brand = rx.hstack(
-        rx.box(width="11px", height="11px", border_radius="50%", bg=PINK),
+        rx.image(src="/kinofiles-mark.svg", width="22px", height="22px"),
         rx.text("KinoFiles", font_weight="600", letter_spacing="-0.01em"),
         spacing="2",
         align="center",
@@ -1253,6 +1253,12 @@ def index() -> rx.Component:
 app = rx.App(
     style=style,
     api_transformer=voice_api,
+    head_components=[
+        rx.el.link(rel="apple-touch-icon", sizes="180x180", href="/apple-touch-icon.png"),
+        rx.el.link(rel="icon", type="image/png", sizes="32x32", href="/favicon-32x32.png"),
+        rx.el.link(rel="icon", type="image/png", sizes="16x16", href="/favicon-16x16.png"),
+        rx.el.link(rel="manifest", href="/site.webmanifest"),
+    ],
     stylesheets=[
         "https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap"
     ],
