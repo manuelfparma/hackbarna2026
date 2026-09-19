@@ -1,0 +1,38 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Python: router_orchestrator",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "agent.router_orchestrator",
+      "python": "${workspaceFolder}/kinofiles/.venv/bin/python",
+      "cwd": "${workspaceFolder}/kinofiles",
+      "console": "integratedTerminal",
+      "justMyCode": true,
+      "envFile": "${workspaceFolder}/kinofiles/.env"
+    },
+    {
+      "name": "Python: embeddings_pipeline",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/kinofiles/data_management/embeddings_pipeline.py",
+      "python": "${workspaceFolder}/kinofiles/.venv/bin/python",
+      "cwd": "${workspaceFolder}/kinofiles",
+      "console": "integratedTerminal",
+      "justMyCode": true,
+      "envFile": "${workspaceFolder}/kinofiles/.env"
+    },
+    {
+      "name": "Python: Current File (kinofiles)",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${file}",
+      "python": "${workspaceFolder}/kinofiles/.venv/bin/python",
+      "cwd": "${workspaceFolder}/kinofiles",
+      "console": "integratedTerminal",
+      "justMyCode": true,
+      "envFile": "${workspaceFolder}/kinofiles/.env"
+    }
+  ]
+}

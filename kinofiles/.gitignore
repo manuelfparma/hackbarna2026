@@ -222,3 +222,6 @@ __marimo__/
 data/*
 kinofiles/data/*
 .env
+
+.DS_Store
+.cursor/

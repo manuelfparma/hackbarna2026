@@ -30,3 +30,44 @@ CREATE INDEX IF NOT EXISTS idx_movies_directors ON movies USING gin (directors);
 -- SELECT * FROM movies WHERE genres @> ARRAY['Comedy'];
 -- Fast lookup using ANY
 -- SELECT * FROM movies WHERE 'Margot Robbie' = ANY(actors);
+
+
+
+
+-- Install vector extension
+
+create extension if not exists vector with schema extensions;
+
+-- Create themes_embeddings table
+
+create table if not exists public.themes_embeddings (
+    id bigint generated always as identity primary key,
+    theme text not null unique,
+    embedding extensions.vector(1024) not null,
+    created_at timestamptz not null default now()
+);
+
+-- Create HNSW index on embedding column
+
+create index if not exists themes_embeddings_embedding_hnsw
+    on public.themes_embeddings
+    using hnsw (embedding vector_cosine_ops);
+
+
+
+-- Create match_themes function
+
+create or replace function match_themes(
+  query_embedding extensions.vector(1024),
+  match_count int default 10
+)
+returns table(theme text, similarity float)
+language sql stable
+as $$
+  select
+    te.theme,
+    1 - (te.embedding <=> query_embedding) as similarity
+  from public.themes_embeddings as te
+  order by te.embedding <=> query_embedding
+  limit match_count;
+$$;
