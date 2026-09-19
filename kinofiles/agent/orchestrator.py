@@ -122,8 +122,7 @@ class OrquestratorAgent:
             return Command(goto="mediate")
             
         person = names[idx]
-        prefix = state.get("response", "") if idx == 0 else ""
-        msg = f"{prefix}\n\n{person}, what are you in the mood for?".strip()
+        msg = f"{person}, what are you in the mood for?"
         text = interrupt(prompt(msg, participant=person))
         
         # Classify
@@ -231,8 +230,7 @@ class OrquestratorAgent:
             return Command(goto="goodbye", update={"choice": winner})
             
         person = names[idx]
-        text = state.get("response", "") if idx == 0 else ""
-        msg = f"{text}\n\n{person}, which one speaks to you? (pick 1-{len(movies)} or say 'none')".strip()
+        msg = f"{person}, which one speaks to you? (pick 1-{len(movies)} or say 'none')".strip()
         
         ans = interrupt(prompt(msg, movies, participant=person)).strip()
         

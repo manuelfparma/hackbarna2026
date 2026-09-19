@@ -60,16 +60,34 @@ def chat_with_agent(req: ChatRequest):
         if "__interrupt__" in event:
             # The agent is asking a question, optionally offering choices.
             pending = event["__interrupt__"][0].value
+            
+            state = agent_instance.graph.get_state(config).values
+            participants = state.get("participants", [])
+            votes = state.get("votes", {})
+            current_participant_idx = state.get("current_participant", 0)
+            current_participant = pending.get("participant")
+            if not current_participant and participants and current_participant_idx < len(participants):
+                current_participant = participants[current_participant_idx]
+                
             return _reply(
                 "waiting_for_input",
                 pending["text"],
                 options=pending["options"],
-                participant=pending.get("participant"),
+                participant=current_participant,
+                participants=participants,
+                votes=votes,
                 criteria=pending.get("criteria", {}),
             )
 
         if "farewell" in event:
-            return _reply("done", event["farewell"], choice=event.get("choice"))
+            state = agent_instance.graph.get_state(config).values
+            return _reply(
+                "done", 
+                event["farewell"], 
+                choice=event.get("choice"),
+                participants=state.get("participants", []),
+                votes=state.get("votes", {})
+            )
 
         return {"status": "unknown", "reply": "An unexpected error occurred."}
 

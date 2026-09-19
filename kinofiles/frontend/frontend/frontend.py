@@ -26,7 +26,9 @@ class AgentState(rx.State):
     show_user_query: bool = False
     is_booting: bool = True
     is_recording: bool = False
-    current_name: str = random.choice(["Alba", "Carla", "Nuria"])
+    participants: list[str] = []
+    votes: dict[str, str] = {}
+    current_name: str = ""
 
     # The titles the agent last put on the table, the art found for them, and
     # the one the viewer is looking at. `selected` is only a highlight until
@@ -110,7 +112,8 @@ class AgentState(rx.State):
             return ""
         msg = self.messages[-1]
         if msg["role"] == "user":
-            return "You · " + msg["content"].splitlines()[0]
+            name = msg.get("name") or "You"
+            return f"{name} · " + msg["content"].splitlines()[0]
         return msg["content"]
 
     @rx.var
@@ -140,7 +143,7 @@ class AgentState(rx.State):
             {
                 "content": message["content"].splitlines()[0],
                 "opacity": fade,
-                "prefix": "You · " if message["role"] == "user" else "",
+                "prefix": f"{message.get('name') or 'You'} · " if message["role"] == "user" else "",
             }
             for message, fade in zip(past, fades)
         ]
@@ -222,7 +225,8 @@ class AgentState(rx.State):
             else:
                 import base64
                 from .api import tts
-                greeting = f"Hey {self.current_name}, what do you feel like watching?"
+                greeting_name = self.current_name if self.current_name else "there"
+                greeting = f"Hey {greeting_name}, what do you feel like watching?"
                 if self.voice_enabled:
                     audio_bytes = await asyncio.to_thread(tts.synthesize, greeting)
                     audio_b64 = base64.b64encode(audio_bytes).decode()
@@ -237,6 +241,12 @@ class AgentState(rx.State):
             self.is_done = data.get("status") == "done"
             if "criteria" in data:
                 self.search_criteria = data["criteria"]
+            if "participant" in data and data["participant"]:
+                self.current_name = data["participant"]
+            if "participants" in data:
+                self.participants = data["participants"]
+            if "votes" in data:
+                self.votes = data["votes"]
         except Exception as e:
             self.messages.append({"role": "agent", "content": f"Error: {str(e)}"})
 
@@ -263,7 +273,9 @@ class AgentState(rx.State):
         self.is_booting = True
         self.current_input = ""
         self.thread_id = str(uuid.uuid4())
-        self.current_name = random.choice(["Alba", "Carla", "Nuria"])
+        self.current_name = ""
+        self.participants = []
+        self.votes = {}
         self.search_criteria = {}
         yield AgentState.start_agent
 
@@ -277,7 +289,7 @@ class AgentState(rx.State):
         yield
 
     async def _send(self, message: str, shown: str | None = None):
-        self.messages.append({"role": "user", "content": shown or message})
+        self.messages.append({"role": "user", "content": shown or message, "name": self.current_name})
         self.current_input = ""
         self.is_loading = True
         self.show_user_query = False
@@ -540,9 +552,25 @@ def status_bar(back: bool = False) -> rx.Component:
         _hover={"box_shadow": SHADOW, "transform": "translateY(-1px)"},
         transition="all .2s ease",
     )
+    participants_badge = rx.cond(
+        AgentState.participants.length() > 0,
+        rx.hstack(
+            rx.icon("users", size=16, color=INK),
+            rx.text(AgentState.participants.length(), font_size="0.9rem", font_weight="500", color=INK),
+            spacing="1",
+            align="center",
+            bg=SURFACE,
+            border=f"1px solid {HAIRLINE}",
+            box_shadow=SHADOW_SM,
+            padding="0.5em 1em 0.5em 0.7em",
+            border_radius="999px",
+        ),
+        rx.box(),
+    )
     return rx.hstack(
         rx.hstack(*([home_button, brand] if back else [brand]), spacing="4", align="center"),
         rx.hstack(
+            participants_badge,
             rx.icon("sun", size=16, color=MUTED),
             rx.text("18°", color=MUTED, font_size="0.9rem"),
             rx.box(width="1px", height="16px", bg=FAINT),
@@ -716,7 +744,16 @@ def agent_panel() -> rx.Component:
                     rx.box(height="0px"),
                 ),
                 rx.vstack(
-                    rx.text("Hey ", AgentState.current_name, ",", font_size="1.6rem", font_weight="500", color=MUTED),
+                    rx.cond(
+                        AgentState.current_name != "",
+                        rx.text(AgentState.current_name, font_size="1.2rem", font_weight="600", color=PINK, text_transform="capitalize"),
+                        rx.box(height="0px"),
+                    ),
+                    rx.cond(
+                        AgentState.current_name != "",
+                        rx.text("Hey ", AgentState.current_name, ",", font_size="1.6rem", font_weight="500", color=MUTED),
+                        rx.text("Hey,", font_size="1.6rem", font_weight="500", color=MUTED),
+                    ),
                     rx.text("What do you feel like watching?", font_size="clamp(2rem, 3vw, 3.5rem)", font_weight="600", letter_spacing="-0.03em", line_height="1.1", color=INK, white_space="nowrap"),
                     spacing="2",
                     align="start",
