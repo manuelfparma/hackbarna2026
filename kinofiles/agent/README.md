@@ -4,10 +4,25 @@ Movie recommendation assistant built with [LangGraph](https://langchain-ai.githu
 
 ## Graph: OrquestratorAgent (supervisor)
 
-```
-welcome --> conversation --> goodbye --> END
-(interrupt)   (subgraph:
-             RecommendationAgent)
+```mermaid
+graph LR
+    Start([Start]) --> welcome
+    
+    welcome((welcome <br/> ⏸️ INTERRUPT)) -->|User input| conversation
+    
+    subgraph Subagent
+        direction TB
+        conversation[[RecommendationAgent]]
+    end
+    
+    conversation -.->|Bubbled Interrupt| conversation
+    conversation -->|Choice made| goodbye
+    
+    goodbye --> END([End])
+
+    style welcome fill:#f9d0c4,stroke:#333,stroke-width:2px,color:#000
+    style conversation fill:#d5f5e3,stroke:#333,stroke-width:1px,color:#000
+    style goodbye fill:#d5f5e3,stroke:#333,stroke-width:1px,color:#000
 ```
 
 - **welcome** — `interrupt()` asking what the user feels like watching. The one question this layer asks directly; everything after the first message is the subagent's job.
@@ -16,12 +31,37 @@ welcome --> conversation --> goodbye --> END
 
 ## Graph: RecommendationAgent (subagent)
 
-```
-classify --> {theme_recommendation | feedback | direct_request
-              | social} --> reply --> turn ------------------+
-                   ^                                           |
-                   +-------------------------------------------+
-                              (no pick yet)
+**Color Legend:**
+- 🟣 **Purple (`#e8daef`)**: Nodes utilizing LLMs.
+- 🟢 **Green (`#d5f5e3`)**: Deterministic nodes.
+
+```mermaid
+graph LR
+
+    Start([Start]) --> classify
+    
+    classify -->|route='theme_recommendation'| theme_recommendation
+    classify -->|route='direct_request'| direct_request
+    classify -->|route='feedback'| feedback
+    classify -->|route='social'| social
+    
+    theme_recommendation --> reply
+    direct_request --> reply
+    feedback --> reply
+    social --> reply
+    
+    reply --> turn((turn <br/> ⏸️ INTERRUPT))
+    
+    turn -->|Selects a movie| END([End])
+    turn -->|New message| classify
+
+    style turn fill:#f9d0c4,stroke:#333,stroke-width:2px,color:#000
+    style classify fill:#e8daef,stroke:#333,stroke-width:1px,color:#000
+    style theme_recommendation fill:#d5f5e3,stroke:#333,stroke-width:1px,color:#000
+    style direct_request fill:#d5f5e3,stroke:#333,stroke-width:1px,color:#000
+    style feedback fill:#d5f5e3,stroke:#333,stroke-width:1px,color:#000
+    style social fill:#d5f5e3,stroke:#333,stroke-width:1px,color:#000
+    style reply fill:#e8daef,stroke:#333,stroke-width:1px,color:#000
 ```
 
 - **classify** — extracts this turn's entities and a criteria action (`add`, `replace`, `reset`, or `keep`), merges them into `search_criteria`, then resolves the capability. A feedback turn that adds a genre or theme is routed back through retrieval with the full accumulated brief.
@@ -94,3 +134,62 @@ Each intent branch in `RecommendationAgent` is its own class under `nodes/`:
 - `nodes/reply.py` — `ReplyComposer`, the shared conversational voice. Production gives this client temperature `0.4`; routing remains at temperature `0`.
 
 `io/turn.py` holds `prompt(text, options)`, the shape every `interrupt()` payload takes — shared by both graphs so `text` (narrated) and `options` (rendered) stay a stable contract for whatever's driving the conversation (terminal loop, web API, TTS/STT).
+
+## Classifier Routing Logic
+
+The `classify` node decides where to route the request based on the extracted `intent`, the `entities` mentioned, and the accumulated `criteria`. Here are the diagrams detailing the routing rules for each possible destination:
+
+### 1. Route to `social`
+```mermaid
+flowchart LR
+    A[Extracted Intent] --> B{is 'social'?}
+    B -- Yes --> C([social node])
+
+    style C fill:#d5f5e3,stroke:#333,stroke-width:1px,color:#000
+```
+
+### 2. Route to `theme_recommendation`
+```mermaid
+flowchart LR
+    Intent([Intent & Entities]) --> check_seed{Has 'seed' or 'liked' movie?}
+    check_seed -- Yes --> Theme([theme_recommendation node])
+    check_seed -- No --> check_themes{Mentions Themes?}
+    
+    check_themes -- Yes --> Theme
+    check_themes -- No --> check_recom{Intent == 'recommendation'?}
+    
+    check_recom -- Yes --> check_recom_filters{Has Catalog Filters?}
+    check_recom_filters -- No --> Theme
+    
+    check_recom -- No --> check_semantic{Direct Request but Semantic?}
+    check_semantic -- "Intent is direct_request, \nNO catalog filters, BUT has themes" --> Theme
+
+    style Theme fill:#d5f5e3,stroke:#333,stroke-width:1px,color:#000
+```
+
+### 3. Route to `direct_request`
+```mermaid
+flowchart LR
+    Intent([Intent & Entities]) --> check_fact{Is Factual Request?}
+    check_fact -- "Asked about a specific movie" --> Direct([direct_request node])
+    check_fact -- No --> check_feedback_filters{Intent == 'feedback'\nAND has Catalog Filters?}
+    
+    check_feedback_filters -- Yes --> Direct
+    check_feedback_filters -- No --> check_recom_filters{Intent in 'recommendation'/'theme'\nAND has Catalog Filters?}
+    
+    check_recom_filters -- Yes --> Direct
+
+    style Direct fill:#d5f5e3,stroke:#333,stroke-width:1px,color:#000
+```
+
+### 4. Route to `feedback`
+```mermaid
+flowchart LR
+    A([Extracted Intent]) --> B{Intent == 'feedback'?}
+    B -- Yes --> C{Has Catalog Filters?}
+    C -- No --> D([feedback node])
+    C -- Yes --> E([direct_request node])
+
+    style D fill:#d5f5e3,stroke:#333,stroke-width:1px,color:#000
+    style E fill:#d5f5e3,stroke:#333,stroke-width:1px,color:#000
+```
