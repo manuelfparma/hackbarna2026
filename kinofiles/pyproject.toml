@@ -1,12 +1,16 @@
 [project]
 name = "kinofiles"
-version = "0.1.0"
+version = "0.1.1"
 description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
+    "dotenv>=0.9.9",
     "kaggle>=2.2.4",
+    "langchain-mistralai>=1.1.6",
+    "langgraph>=1.2.11",
     "pandas>=3.0.6",
     "pyarrow>=25.0.1",
+    "reflex>=0.9.11.post1",
     "supabase>=2.31.0",
 ]
