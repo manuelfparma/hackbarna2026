@@ -111,3 +111,41 @@ as $$
   order by de.embedding <=> query_embedding
   limit match_count;
 $$;
+
+-- #######################
+-- FUZZY SEARCH FOR MOVIES
+-- #######################
+
+-- 1. Enable extensions
+CREATE EXTENSION IF NOT EXISTS pg_trgm;
+CREATE EXTENSION IF NOT EXISTS citext;
+
+-- 2. Convert the existing 'name' column to case-insensitive text (preserves original casing)
+ALTER TABLE movies ALTER COLUMN name TYPE citext;
+
+-- 2.5. Create an IMMUTABLE wrapper for array_to_string
+-- PostgreSQL requires GENERATED ALWAYS expressions to be strictly IMMUTABLE.
+-- array_to_string is technically STABLE, so we wrap it for TEXT arrays.
+CREATE OR REPLACE FUNCTION array_to_string_immutable(arr TEXT[], sep TEXT)
+RETURNS TEXT
+IMMUTABLE PARALLEL SAFE
+LANGUAGE sql
+AS $$
+    SELECT array_to_string(arr, sep);
+$$;
+
+-- 3. Add generated text columns for array fields (excluding 'themes')
+ALTER TABLE movies 
+  ADD COLUMN genres_text TEXT GENERATED ALWAYS AS (array_to_string_immutable(genres, ' ')) STORED,
+  ADD COLUMN studios_text TEXT GENERATED ALWAYS AS (array_to_string_immutable(studios, ' ')) STORED,
+  ADD COLUMN languages_text TEXT GENERATED ALWAYS AS (array_to_string_immutable(languages, ' ')) STORED,
+  ADD COLUMN actors_text TEXT GENERATED ALWAYS AS (array_to_string_immutable(actors, ' ')) STORED,
+  ADD COLUMN directors_text TEXT GENERATED ALWAYS AS (array_to_string_immutable(directors, ' ')) STORED;
+
+-- 4. Create Trigram GIN indexes for fast fuzzy search
+CREATE INDEX IF NOT EXISTS idx_movies_name_trgm ON movies USING GIN (name gin_trgm_ops);
+CREATE INDEX IF NOT EXISTS idx_movies_genres_trgm ON movies USING GIN (genres_text gin_trgm_ops);
+CREATE INDEX IF NOT EXISTS idx_movies_studios_trgm ON movies USING GIN (studios_text gin_trgm_ops);
+CREATE INDEX IF NOT EXISTS idx_movies_languages_trgm ON movies USING GIN (languages_text gin_trgm_ops);
+CREATE INDEX IF NOT EXISTS idx_movies_actors_trgm ON movies USING GIN (actors_text gin_trgm_ops);
+CREATE INDEX IF NOT EXISTS idx_movies_directors_trgm ON movies USING GIN (directors_text gin_trgm_ops);

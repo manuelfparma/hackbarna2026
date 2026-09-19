@@ -96,6 +96,8 @@ class Classification(BaseModel):
 
     def as_filter(self) -> tuple[str | None, str | None]:
         """First catalog attribute for the existing direct_request node."""
+        if self.entities.movies:
+            return "name", self.entities.movies[0].title
         for column in FILTER_COLUMNS:
             values = getattr(self.entities, column)
             if values:
