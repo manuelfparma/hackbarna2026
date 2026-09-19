@@ -8,7 +8,8 @@ import json
 
 PROMPT = """You are the router for a movie assistant. Classify the message into exactly one category:
 
-- recommendation: the user wants movie suggestions based on their mood or a complex description.
+- theme_recommendation: the user wants suggestions based on mood, vibe, topic, or thematic content (e.g. "melancholy family stories", "coming of age", "movies about grief", "something with found family"). Prefer this over recommendation whenever the ask is about themes rather than a generic "recommend a movie".
+- recommendation: the user wants movie suggestions but did not describe themes, mood, or topic (e.g. "recommend me a film", "what's good to watch").
 - feedback: the user is reacting to recommendations already given (likes, dislikes, or asks to change them).
 - direct_request: the user asks for movies by a specific attribute (e.g. director, actors, genres, studios, themes, languages).
 - social: greetings, thanks, small talk, or anything unrelated to movies.
@@ -16,7 +17,7 @@ PROMPT = """You are the router for a movie assistant. Classify the message into 
 Message: {request}
 
 Return a JSON object with the following keys:
-- "intent": exactly one of "recommendation", "feedback", "direct_request", "social"
+- "intent": exactly one of "theme_recommendation", "recommendation", "feedback", "direct_request", "social"
 - "column": if intent is "direct_request", the attribute to filter by (one of "directors", "actors", "genres", "studios", "themes", "languages"). Otherwise, null.
 - "value": if intent is "direct_request", the exact value to search for. Otherwise, null.
 
@@ -30,11 +31,17 @@ Answer: {{"intent": "direct_request", "column": "genres", "value": "Comedy"}}
 
 Example 3:
 Message: I feel like watching something funny.
-Answer: {{"intent": "recommendation", "column": null, "value": null}}
+Answer: {{"intent": "theme_recommendation", "column": null, "value": null}}
 
 Answer:"""
 
-INTENTS = {"recommendation", "feedback", "direct_request", "social"}
+INTENTS = {
+    "theme_recommendation",
+    "recommendation",
+    "feedback",
+    "direct_request",
+    "social",
+}
 
 
 class Classifier:

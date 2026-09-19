@@ -6,11 +6,14 @@ readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
     "dotenv>=0.9.9",
+    "fastapi>=0.121.2",
     "kaggle>=2.2.4",
     "langchain-mistralai>=1.1.6",
     "langgraph>=1.2.11",
     "pandas>=3.0.6",
     "pyarrow>=25.0.1",
     "reflex>=0.9.11.post1",
+    "requests>=2.34.2",
     "supabase>=2.31.0",
+    "uvicorn>=0.34.0",
 ]
