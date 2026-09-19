@@ -10,7 +10,7 @@ drives the conversation turn by turn, reusing the same thread_id so state
 
 from typing import TypedDict
 
-from agent.llm import build_llm
+from agent.llm import build_llm, build_mistral_llm
 from agent.nodes.classifier import Classifier
 from agent.nodes.direct_request import DirectRequestHandler
 from agent.nodes.feedback import FeedbackHandler
@@ -28,15 +28,16 @@ class State(TypedDict):
     intent: str
     column: str | None
     value: str | None
+    entities: dict
     feedback: list[str]
     movies: list[str]
     response: str
 
 
 class RecommendationAgent:
-    def __init__(self, llm=None):
+    def __init__(self, llm=None, classifier_llm=None):
         self.llm = llm or build_llm()
-        self.classifier = Classifier(self.llm)
+        self.classifier = Classifier(classifier_llm or build_mistral_llm())
         self.recommender = Recommender(self.llm)
         self.theme_recommender = ThemeRecommender(self.llm)
         self.feedback_handler = FeedbackHandler(self.llm)
@@ -65,15 +66,17 @@ class RecommendationAgent:
     def classify(self, state: State) -> Command:
         """First layer: decide which node should handle this message."""
         result = self.classifier.classify(state["request"])
-        intent = result["intent"]
+        intent = result.intent
+        column, value = result.as_filter()
         return Command(
-            goto=intent, 
+            goto=intent,
             update={
                 "intent": intent,
-                "column": result.get("column"),
-                "value": result.get("value"),
-                "response": ""
-            }
+                "column": column,
+                "value": value,
+                "entities": result.entities.model_dump(),
+                "response": "",
+            },
         )
 
     def theme_recommendation(self, state: State) -> State:
