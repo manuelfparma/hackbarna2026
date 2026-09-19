@@ -8,6 +8,7 @@ drives the conversation turn by turn, reusing the same thread_id so state
 (feedback, last recommendations) persists across calls.
 """
 
+import os
 from typing import TypedDict
 from dotenv import load_dotenv
 
@@ -26,6 +27,8 @@ from agent.sugagents.social import SocialHandler
 class State(TypedDict):
     request: str
     intent: str
+    column: str | None
+    value: str | None
     feedback: list[str]
     movies: list[str]
     response: str
@@ -33,7 +36,16 @@ class State(TypedDict):
 
 class RouterOrchestratorAgent:
     def __init__(self, llm=None):
-        self.llm = llm or ChatMistralAI(model="ministral-8b-2512", temperature=0)
+        api_key = os.environ.get("MISTRAL_API_KEY")
+        endpoint = os.environ.get("MISTRAL_ENDPOINT")
+        model = os.environ.get("MISTRAL_MODEL", "ministral-8b-2512")
+        
+        self.llm = llm or ChatMistralAI(
+            model=model,
+            temperature=0,
+            mistral_api_key=api_key,
+            endpoint=endpoint,
+        )
         self.classifier = Classifier(self.llm)
         self.recommender = Recommender(self.llm)
         self.feedback_handler = FeedbackHandler(self.llm)
@@ -59,8 +71,16 @@ class RouterOrchestratorAgent:
 
     def classify(self, state: State) -> Command:
         """First layer: decide which node should handle this message."""
-        intent = self.classifier.classify(state["request"])
-        return Command(goto=intent, update={"intent": intent})
+        result = self.classifier.classify(state["request"])
+        intent = result["intent"]
+        return Command(
+            goto=intent, 
+            update={
+                "intent": intent,
+                "column": result["column"],
+                "value": result["value"]
+            }
+        )
 
     def recommendation(self, state: State) -> State:
         """Produce movie suggestions for the request."""
@@ -75,8 +95,8 @@ class RouterOrchestratorAgent:
         return {"feedback": feedback, "movies": movies, "response": response}
 
     def direct_request(self, state: State) -> State:
-        """Answer a specific factual question about a movie."""
-        response = self.direct_request_handler.handle(state["request"])
+        """Process a direct request using the extracted column and value."""
+        response = self.direct_request_handler.handle(state.get("column"), state.get("value"))
         return {"response": response}
 
     def social(self, state: State) -> State:
