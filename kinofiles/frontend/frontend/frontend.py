@@ -647,7 +647,7 @@ def selection_panel() -> rx.Component:
                     letter_spacing="-0.03em",
                     line_height="1.12",
                 ),
-                rx.hstack(pill("Recomendación"), pill("KinoFiles AI"), spacing="2", wrap="wrap"),
+                rx.hstack(pill("Recomendación"), spacing="2", wrap="wrap"),
                 spacing="3",
                 align="start",
                 width="100%",
