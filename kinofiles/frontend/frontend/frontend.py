@@ -53,11 +53,11 @@ class AgentState(rx.State):
             self.thread_id = str(uuid.uuid4())
             return AgentState.start_agent
 
-    def open_tv_agent(self):
+    async def open_tv_agent(self):
+        yield rx.redirect("/agent")
         if not self.thread_id:
             self.thread_id = str(uuid.uuid4())
-            return [rx.redirect("/agent"), AgentState.start_agent]
-        return rx.redirect("/agent")
+            yield AgentState.start_agent
 
     @rx.var
     def latest_message(self) -> str:
@@ -521,7 +521,7 @@ def agent_tv_panel() -> rx.Component:
                 rx.text("Volver", color="white", font_size="1.5em", cursor="pointer", on_click=rx.redirect("/")),
                 align_items="center",
                 width="100%",
-                padding_top="2em",
+                padding_top="1.5em",
                 padding_left="2em",
                 position="absolute",
                 top="0",
@@ -531,14 +531,14 @@ def agent_tv_panel() -> rx.Component:
             # Big text response
             rx.text(
                 AgentState.latest_message,
-                font_size="3em",
+                font_size="2.5em",
                 font_weight="bold",
                 color="white",
                 max_width="80%",
                 text_align="center",
-                margin_top="10vh",
-                margin_bottom="2em",
-                min_height="150px",
+                margin_top="2em",
+                margin_bottom="1em",
+                min_height="100px",
                 line_height="1.2",
             ),
             
@@ -546,20 +546,20 @@ def agent_tv_panel() -> rx.Component:
             rx.button(
                 rx.cond(
                     AgentState.is_recording,
-                    rx.hstack(rx.icon("square", size=48, color="white"), rx.text("Grabando...", font_size="2em", color="white"), spacing="4", align_items="center"),
-                    rx.hstack(rx.icon("mic", size=48, color="white"), rx.text("Hablar", font_size="2em", color="white"), spacing="4", align_items="center")
+                    rx.hstack(rx.icon("square", size=32, color="white"), rx.text("Grabando...", font_size="1.5em", color="white"), spacing="3", align_items="center"),
+                    rx.hstack(rx.icon("mic", size=32, color="white"), rx.text("Hablar", font_size="1.5em", color="white"), spacing="3", align_items="center")
                 ),
                 on_click=rx.call_script(
                     TOGGLE_RECORDING_JS,
                     callback=AgentState.handle_voice,
                 ),
                 bg=rx.cond(AgentState.is_recording, "#d32f2f", titan_red),
-                padding="3em 5em",
+                padding="1.5em 3em",
                 border_radius="30px",
                 _hover={"bg": "#d32f2f", "transform": "scale(1.05)"},
                 transition="all 0.2s",
                 box_shadow="0 15px 30px rgba(0,0,0,0.5)",
-                margin_bottom="2em",
+                margin_bottom="1em",
             ),
             
             rx.cond(
@@ -569,20 +569,21 @@ def agent_tv_panel() -> rx.Component:
             ),
             
             # Recommendations (dummy posters)
-            rx.text("Recomendaciones", font_size="2em", color=text_muted, margin_top="2em", margin_bottom="1em"),
+            rx.text("Recomendaciones", font_size="1.5em", color=text_muted, margin_top="1em", margin_bottom="0.5em"),
             rx.hstack(
-                rx.image(src="https://dummyimage.com/300x450/176B9C/ffffff&text=Peli+1", height="350px", border_radius="15px", box_shadow="0 10px 20px rgba(0,0,0,0.6)"),
-                rx.image(src="https://dummyimage.com/300x450/F4434B/ffffff&text=Peli+2", height="350px", border_radius="15px", box_shadow="0 10px 20px rgba(0,0,0,0.6)"),
-                rx.image(src="https://dummyimage.com/300x450/333333/ffffff&text=Peli+3", height="350px", border_radius="15px", box_shadow="0 10px 20px rgba(0,0,0,0.6)"),
-                rx.image(src="https://dummyimage.com/300x450/111111/ffffff&text=Peli+4", height="350px", border_radius="15px", box_shadow="0 10px 20px rgba(0,0,0,0.6)"),
-                spacing="6",
+                rx.image(src="https://dummyimage.com/300x450/176B9C/ffffff&text=Peli+1", height="220px", border_radius="15px", box_shadow="0 10px 20px rgba(0,0,0,0.6)"),
+                rx.image(src="https://dummyimage.com/300x450/F4434B/ffffff&text=Peli+2", height="220px", border_radius="15px", box_shadow="0 10px 20px rgba(0,0,0,0.6)"),
+                rx.image(src="https://dummyimage.com/300x450/333333/ffffff&text=Peli+3", height="220px", border_radius="15px", box_shadow="0 10px 20px rgba(0,0,0,0.6)"),
+                rx.image(src="https://dummyimage.com/300x450/111111/ffffff&text=Peli+4", height="220px", border_radius="15px", box_shadow="0 10px 20px rgba(0,0,0,0.6)"),
+                spacing="4",
                 overflow_x="auto",
                 width="90%",
-                padding_bottom="2em",
+                padding_bottom="1em",
                 justify="center"
             ),
             
             align_items="center",
+            justify="center",
             width="100%",
             height="100vh",
         ),
