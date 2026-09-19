@@ -218,3 +218,8 @@ __marimo__/
 .streamlit/secrets.toml
 
 .idea
+
+# Ignore downloaded Kaggle datasets and generated datasets
+kinofiles/data/*.csv
+kinofiles/data/*.jsonl
+kinofiles/data/*.zip
