@@ -39,9 +39,17 @@ class AgentState(rx.State):
     is_done: bool = False
     search_criteria: dict = {}
     voice_enabled: bool = True
+    voice_name: str = "Claire"
+
+    @rx.var
+    def participants_string(self) -> str:
+        return ", ".join(self.participants)
 
     def toggle_voice(self):
         self.voice_enabled = not self.voice_enabled
+
+    def toggle_voice_name(self):
+        self.voice_name = "James" if self.voice_name == "Claire" else "Claire"
 
     def close_player(self):
         self.is_done = False
@@ -215,8 +223,9 @@ class AgentState(rx.State):
         """
         audio_b64 = None
         try:
+            voice_id = "aura-2-orion-en" if self.voice_name == "James" else "aura-2-asteria-en"
             data = await asyncio.to_thread(
-                chat_with_agent, ChatRequest(thread_id=self.thread_id, message=message)
+                chat_with_agent, ChatRequest(thread_id=self.thread_id, message=message, voice=voice_id)
             )
             if message is not None:
                 self.messages.append({"role": "agent", "content": data.get("reply", "")})
@@ -228,7 +237,7 @@ class AgentState(rx.State):
                 greeting_name = self.current_name if self.current_name else "there"
                 greeting = f"Hey {greeting_name}, what do you feel like watching?"
                 if self.voice_enabled:
-                    audio_bytes = await asyncio.to_thread(tts.synthesize, greeting)
+                    audio_bytes = await asyncio.to_thread(tts.synthesize, greeting, voice=voice_id)
                     audio_b64 = base64.b64encode(audio_bytes).decode()
 
             # Options are the films on offer; a choice means the agent has
@@ -555,36 +564,59 @@ def status_bar(back: bool = False) -> rx.Component:
     participants_badge = rx.cond(
         AgentState.participants.length() > 0,
         rx.hstack(
-            rx.icon("users", size=16, color=INK),
-            rx.text(AgentState.participants.length(), font_size="0.9rem", font_weight="500", color=INK),
-            spacing="1",
+            rx.icon("users", size=14, color=MUTED),
+            rx.text(AgentState.participants_string, font_size="0.8rem", font_weight="500", color=MUTED),
+            spacing="2",
             align="center",
             bg=SURFACE,
             border=f"1px solid {HAIRLINE}",
             box_shadow=SHADOW_SM,
-            padding="0.5em 1em 0.5em 0.7em",
+            padding="0.3em 0.8em",
             border_radius="999px",
         ),
         rx.box(),
     )
     return rx.hstack(
         rx.hstack(*([home_button, brand] if back else [brand]), spacing="4", align="center"),
-        rx.hstack(
-            participants_badge,
-            rx.icon("sun", size=16, color=MUTED),
-            rx.text("18°", color=MUTED, font_size="0.9rem"),
-            rx.box(width="1px", height="16px", bg=FAINT),
-            rx.vstack(
-                rx.text(datetime.datetime.now().strftime("%H:%M"), font_weight="600", font_size="0.95rem", line_height="1"),
-                rx.text(datetime.datetime.now().strftime("%A, %B %d"), font_size="0.7rem", color=MUTED, line_height="1"),
-                spacing="1",
-                align="end",
+        rx.vstack(
+            rx.hstack(
+                rx.icon("sun", size=16, color=MUTED),
+                rx.text("18°", color=MUTED, font_size="0.9rem"),
+                rx.box(width="1px", height="16px", bg=FAINT),
+                rx.vstack(
+                    rx.text(datetime.datetime.now().strftime("%H:%M"), font_weight="600", font_size="0.95rem", line_height="1"),
+                    rx.text(datetime.datetime.now().strftime("%A, %B %d"), font_size="0.7rem", color=MUTED, line_height="1"),
+                    spacing="1",
+                    align="end",
+                ),
+                spacing="3",
+                align="center",
             ),
-            spacing="3",
-            align="center",
+            rx.hstack(
+                participants_badge,
+                rx.hstack(
+                    rx.icon("mic", size=14, color=MUTED),
+                    rx.text(AgentState.voice_name, font_size="0.8rem", font_weight="500", color=MUTED),
+                    spacing="2",
+                    align="center",
+                    bg=SURFACE,
+                    border=f"1px solid {HAIRLINE}",
+                    box_shadow=SHADOW_SM,
+                    padding="0.3em 0.8em",
+                    border_radius="999px",
+                    cursor="pointer",
+                    on_click=AgentState.toggle_voice_name,
+                    _hover={"box_shadow": SHADOW, "transform": "translateY(-1px)"},
+                    transition="all .2s ease",
+                ),
+                spacing="2",
+                align="center",
+            ),
+            align="end",
+            spacing="2",
         ),
         justify="between",
-        align="center",
+        align="start",
         width="100%",
     )
 

@@ -26,9 +26,10 @@ tts = TTS()
 class ChatRequest(BaseModel):
     thread_id: str
     message: str | None = None
+    voice: str | None = None
 
 
-def _reply(status: str, text: str, options: list[str] | None = None, **extra) -> dict:
+def _reply(status: str, text: str, options: list[str] | None = None, voice: str | None = None, **extra) -> dict:
     """Build a chat response, synthesizing speech for `text` alongside it.
 
     Only `text` is narrated: `options` are for the screen, so they never
@@ -40,7 +41,10 @@ def _reply(status: str, text: str, options: list[str] | None = None, **extra) ->
     payload = {"status": status, "reply": text, "options": options or [], **extra}
     if text.strip():
         try:
-            payload["audio"] = base64.b64encode(tts.synthesize(text)).decode()
+            if voice:
+                payload["audio"] = base64.b64encode(tts.synthesize(text, voice=voice)).decode()
+            else:
+                payload["audio"] = base64.b64encode(tts.synthesize(text)).decode()
         except Exception:
             payload["audio"] = None
     return payload
@@ -73,6 +77,7 @@ def chat_with_agent(req: ChatRequest):
                 "waiting_for_input",
                 pending["text"],
                 options=pending["options"],
+                voice=req.voice,
                 participant=current_participant,
                 participants=participants,
                 votes=votes,
@@ -85,6 +90,7 @@ def chat_with_agent(req: ChatRequest):
                 "done", 
                 event["farewell"], 
                 choice=event.get("choice"),
+                voice=req.voice,
                 participants=state.get("participants", []),
                 votes=state.get("votes", {})
             )

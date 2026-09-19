@@ -230,7 +230,7 @@ class OrquestratorAgent:
             return Command(goto="goodbye", update={"choice": winner})
             
         person = names[idx]
-        msg = f"{person}, which one speaks to you? (pick 1-{len(movies)} or say 'none')".strip()
+        msg = f"{person}, which one speaks to you?"
         
         ans = interrupt(prompt(msg, movies, participant=person)).strip()
         

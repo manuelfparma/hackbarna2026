@@ -11,7 +11,7 @@ import os
 import requests
 
 ENDPOINT = "https://us-east.api.slng.ai/v1/tts/slng/deepgram/aura:2-en"
-DEFAULT_VOICE = "aura-2-thalia-en"
+DEFAULT_VOICE = "aura-2-perseus-en"
 
 
 class TTS:
