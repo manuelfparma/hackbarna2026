@@ -1,4 +1,4 @@
--- SQL Script to create the 'movies' table for the RAG dataset in Supabase
+-- SQL script to create movies and embedding tables for the RAG dataset in Supabase
 
 CREATE TABLE IF NOT EXISTS movies (
     id BIGINT PRIMARY KEY,
@@ -69,5 +69,44 @@ as $$
     1 - (te.embedding <=> query_embedding) as similarity
   from public.themes_embeddings as te
   order by te.embedding <=> query_embedding
+  limit match_count;
+$$;
+
+
+
+-- Create descriptions_embeddings table
+
+create table if not exists public.descriptions_embeddings (
+    movie_id bigint primary key references public.movies(id),
+    description text not null,
+    embedding extensions.vector(1024) not null,
+    created_at timestamptz not null default now()
+);
+
+-- Create HNSW index on embedding column
+
+create index if not exists descriptions_embeddings_embedding_hnsw
+    on public.descriptions_embeddings
+    using hnsw (embedding vector_cosine_ops);
+
+
+
+-- Create match_descriptions function
+
+create or replace function match_descriptions(
+  query_embedding extensions.vector(1024),
+  match_count int default 10
+)
+returns table(movie_id bigint, name text, description text, similarity float)
+language sql stable
+as $$
+  select
+    de.movie_id,
+    m.name,
+    de.description,
+    1 - (de.embedding <=> query_embedding) as similarity
+  from public.descriptions_embeddings as de
+  join public.movies as m on m.id = de.movie_id
+  order by de.embedding <=> query_embedding
   limit match_count;
 $$;

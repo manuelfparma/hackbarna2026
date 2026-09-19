@@ -13,10 +13,21 @@
       "envFile": "${workspaceFolder}/kinofiles/.env"
     },
     {
-      "name": "Python: embeddings_pipeline",
+      "name": "Python: theme_embeddings_pipeline",
       "type": "debugpy",
       "request": "launch",
-      "program": "${workspaceFolder}/kinofiles/data_management/embeddings_pipeline.py",
+      "program": "${workspaceFolder}/kinofiles/data_management/theme_embeddings_pipeline.py",
+      "python": "${workspaceFolder}/kinofiles/.venv/bin/python",
+      "cwd": "${workspaceFolder}/kinofiles",
+      "console": "integratedTerminal",
+      "justMyCode": true,
+      "envFile": "${workspaceFolder}/kinofiles/.env"
+    },
+    {
+      "name": "Python: descriptions_embeddings_pipeline",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/kinofiles/data_management/descriptions_embeddings_pipeline.py",
       "python": "${workspaceFolder}/kinofiles/.venv/bin/python",
       "cwd": "${workspaceFolder}/kinofiles",
       "console": "integratedTerminal",
