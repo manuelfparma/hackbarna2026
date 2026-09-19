@@ -1,0 +1,32 @@
+@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;800&display=swap');
+
+:root {
+  --titan-red: #F4434B;
+  --titan-blue: #176B9C;
+  --titan-blue-hover: #1b8cd2;
+  --bg-dark: #050505;
+  --text-main: #fcfcfc;
+  --text-muted: #999999;
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body, html {
+  font-family: 'Outfit', -apple-system, BlinkMacSystemFont, sans-serif;
+  background-color: var(--bg-dark);
+  color: var(--text-main);
+  overflow-x: hidden;
+  min-height: 100vh;
+  /* A deep, premium dark background that avoids feeling 'flat' */
+  background: radial-gradient(circle at 50% -20%, #1a1a1a 0%, #050505 80%);
+}
+
+button {
+  font-family: 'Outfit', sans-serif;
+  border: none;
+  cursor: pointer;
+}
