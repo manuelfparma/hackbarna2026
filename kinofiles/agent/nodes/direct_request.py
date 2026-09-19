@@ -8,7 +8,7 @@ import os
 from dotenv import load_dotenv
 from supabase import create_client, Client
 
-from agent.nodes.catalog import resolve_movie
+from agent.nodes.catalog import clean_title, resolve_movie
 from agent.nodes.criteria import CATALOG_ARRAY_FIELDS, normalize_criteria
 
 
@@ -36,17 +36,20 @@ class DirectRequestHandler:
             for field in CATALOG_ARRAY_FIELDS
             if normalized[field]
         }
-        if column and value and column in CATALOG_ARRAY_FIELDS and column not in filters:
+        title = None
+        if column == "name" and value:
+            title = clean_title(value)
+        elif column and value and column in CATALOG_ARRAY_FIELDS and column not in filters:
             filters[column] = [value]
         result = {
             "kind": "direct_request",
             "titles": [],
-            "filters": filters,
+            "filters": {**filters, **({"name": [value]} if title else {})},
             "error": None,
         }
-        if not filters:
+        if not filters and not title:
             result["error"] = (
-                "I couldn't identify the actor, director, genre, studio, or language."
+                "I couldn't identify the actor, director, genre, studio, language, or title."
             )
             return result
 
@@ -56,13 +59,28 @@ class DirectRequestHandler:
 
         try:
             query = self.supabase.table("movies").select("name")
+            if title:
+                # name is citext + pg_trgm: fuzzy title search.
+                query = query.ilike("name", f"%{title}%")
             for filter_column, values in filters.items():
-                query = query.contains(filter_column, values)
+                if filter_column == "genres":
+                    # Canonical labels: strict array containment keeps the
+                    # multi-genre AND intact.
+                    query = query.contains("genres", values)
+                else:
+                    # Free-form names use the generated *_text columns so
+                    # partial mentions still match ("Nolan" -> "Christopher
+                    # Nolan"); one ilike per value keeps it an AND.
+                    for item in values:
+                        query = query.ilike(
+                            f"{filter_column}_text", f"%{clean_title(item)}%"
+                        )
             res = query.order("rating", desc=True).limit(5).execute()
             movies = res.data
+
             if not movies:
                 labels = ", ".join(
-                    str(item) for values in filters.values() for item in values
+                    str(item) for values in result["filters"].values() for item in values
                 )
                 result["error"] = f"I couldn't find movies matching {labels}."
                 return result
