@@ -69,7 +69,7 @@ class OrquestratorAgent:
         """Let the user pick a movie, or collect feedback for another round."""
         movies = state["movies"]
         answer = interrupt(prompt(
-            f"Pick a number (1-{len(movies)}) or tell me what to change.",
+            "Select an option or tell me what to change.",
             movies,
         )).strip()
 
