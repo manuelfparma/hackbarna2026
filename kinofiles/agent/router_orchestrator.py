@@ -9,18 +9,17 @@ drives the conversation turn by turn, reusing the same thread_id so state
 """
 
 from typing import TypedDict
-from dotenv import load_dotenv
 
+from agent.sugagents.classifier import Classifier
+from agent.sugagents.direct_request import DirectRequestHandler
+from agent.sugagents.feedback import FeedbackHandler
+from agent.sugagents.recommender import Recommender
+from agent.sugagents.social import SocialHandler
+from dotenv import load_dotenv
 from langchain_mistralai import ChatMistralAI
 from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.graph import END, StateGraph
 from langgraph.types import Command
-
-from agent.sugagents.classifier import Classifier
-from agent.sugagents.recommender import Recommender
-from agent.sugagents.feedback import FeedbackHandler
-from agent.sugagents.direct_request import DirectRequestHandler
-from agent.sugagents.social import SocialHandler
 
 
 class State(TypedDict):
@@ -31,7 +30,7 @@ class State(TypedDict):
     response: str
 
 
-class RouterOrchestratorAgent:
+class RecommendationAgent:
     def __init__(self, llm=None):
         self.llm = llm or ChatMistralAI(model="ministral-8b-2512", temperature=0)
         self.classifier = Classifier(self.llm)
@@ -93,7 +92,7 @@ class RouterOrchestratorAgent:
 
 if __name__ == "__main__":
     load_dotenv()
-    agent = RouterOrchestratorAgent()
+    agent = RecommendationAgent()
     while True:
         text = input("> ")
         print(agent.run(text))
