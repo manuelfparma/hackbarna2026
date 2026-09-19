@@ -8,25 +8,10 @@ Swap `ENDPOINT` for another SLNG-hosted model later — callers only see
 """
 
 import os
-from pathlib import Path
 
 import requests
 
 ENDPOINT = "https://us-east.api.slng.ai/v1/stt/deepgram/nova:3"
-
-# Maps file extension -> SLNG `encoding` value. linear16 (wav) is the only
-# one the API defaults to; every other format must be named explicitly.
-ENCODING_BY_SUFFIX = {
-    ".wav": "linear16",
-    ".flac": "flac",
-    ".mp3": "mp3",
-    ".mp4": "mp4",
-    ".m4a": "mp4",
-    ".webm": "webm",
-    ".aac": "aac",
-    ".ogg": "ogg",
-    ".opus": "opus",
-}
 
 
 class STT:
@@ -35,19 +20,17 @@ class STT:
 
     def transcribe(self, audio: bytes, filename: str = "audio.wav", language: str = "multi") -> str:
         """Send a full audio clip to SLNG and return the transcript text."""
-        encoding = ENCODING_BY_SUFFIX.get(Path(filename).suffix.lower())
-        data = {"language": language, "punctuate": "true"}
-        if encoding:
-            data["encoding"] = encoding
-
+        # No `encoding`: that parameter is for raw headerless audio and makes
+        # the API reject containers like webm. Formats are auto-detected.
         response = requests.post(
             ENDPOINT,
             headers={"Authorization": f"Bearer {self.api_key}"},
             files={"audio": (filename, audio)},
-            data=data,
+            data={"language": language, "punctuate": "true"},
             timeout=30,
         )
-        response.raise_for_status()
+        if not response.ok:
+            raise RuntimeError(f"SLNG {response.status_code}: {response.text}")
         return response.json()["results"]["channels"][0]["alternatives"][0]["transcript"]
 
 

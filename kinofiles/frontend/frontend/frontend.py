@@ -1,8 +1,24 @@
 """Welcome to Reflex! This file outlines the streaming dashboard app."""
 
+import asyncio
+import json
+
 import reflex as rx
-import httpx
 import uuid
+
+def format_reply(data: dict) -> str:
+    """Render a turn for the chat: spoken text first, then the options.
+
+    The API keeps options out of `reply` so TTS never reads a numbered list
+    aloud; they still belong on screen, so they get stitched back in here.
+    """
+    text = data.get("reply", "")
+    options = data.get("options") or []
+    if not options:
+        return text
+    listed = "\n".join(f"{i}. {option}" for i, option in enumerate(options, 1))
+    return f"{text}\n\n{listed}"
+
 
 # --- State ---
 class AgentState(rx.State):
@@ -11,9 +27,25 @@ class AgentState(rx.State):
     current_input: str = ""
     thread_id: str = ""
     is_loading: bool = False
+    is_recording: bool = False
 
     def set_current_input(self, val: str):
         self.current_input = val
+
+    def handle_voice(self, result: str):
+        """Receive the toggle script's outcome: recording started, or a transcript."""
+        outcome = json.loads(result)
+        self.is_recording = bool(outcome.get("recording"))
+
+        if error := outcome.get("error"):
+            self.messages.append({"role": "agent", "content": f"Error de voz: {error}"})
+            return
+
+        text = (outcome.get("text") or "").strip()
+        if not text:
+            return
+        self.current_input = text
+        return AgentState.send_message
 
     def toggle_chat(self):
         self.show_chat = not self.show_chat
@@ -21,39 +53,121 @@ class AgentState(rx.State):
             self.thread_id = str(uuid.uuid4())
             return AgentState.start_agent
 
+    async def _turn(self, message: str | None):
+        """Run one orchestrator turn and show its reply, narration included.
+
+        Called in-process rather than over HTTP: the chat API lives in this
+        same server, so a loopback request would only add a serialization
+        round trip and break whenever the backend hot-reloads mid-request.
+        The call blocks on the LLM and TTS, hence the thread.
+        """
+        audio_b64 = None
+        try:
+            data = await asyncio.to_thread(
+                chat_with_agent, ChatRequest(thread_id=self.thread_id, message=message)
+            )
+            self.messages.append({"role": "agent", "content": format_reply(data)})
+            audio_b64 = data.get("audio")
+        except Exception as e:
+            self.messages.append({"role": "agent", "content": f"Error: {str(e)}"})
+
+        self.is_loading = False
+        if audio_b64:
+            yield rx.call_script(play_audio_script(audio_b64))
+
     async def start_agent(self):
         self.is_loading = True
         yield
-        try:
-            # Reflex backend runs on port 8000 by default
-            async with httpx.AsyncClient() as client:
-                resp = await client.post("http://localhost:8001/api/agent/chat", json={"thread_id": self.thread_id, "message": None}, timeout=60.0)
-            data = resp.json()
-            self.messages.append({"role": "agent", "content": data.get("reply", "")})
-        except Exception as e:
-            self.messages.append({"role": "agent", "content": f"Error: {str(e)}"})
-        self.is_loading = False
+        async for event in self._turn(None):
+            yield event
 
     async def send_message(self):
         if not self.current_input.strip():
             return
-        
+
         user_msg = self.current_input
         self.messages.append({"role": "user", "content": user_msg})
         self.current_input = ""
         self.is_loading = True
         yield
-        
-        try:
-            async with httpx.AsyncClient() as client:
-                resp = await client.post("http://localhost:8001/api/agent/chat", json={"thread_id": self.thread_id, "message": user_msg}, timeout=60.0)
-            data = resp.json()
-            self.messages.append({"role": "agent", "content": data.get("reply", "")})
-        except Exception as e:
-            self.messages.append({"role": "agent", "content": f"Error: {str(e)}"})
-        
-        self.is_loading = False
 
+        async for event in self._turn(user_msg):
+            yield event
+
+
+from .api import ChatRequest, chat_with_agent
+from .io_api import api as voice_api
+
+
+# In dev the page is served by Vite (:3000) while these routes live on the
+# Reflex backend (:8000), so a relative fetch would hit Vite and get HTML back.
+# `getBackendURL`/`env` are in scope for Reflex's direct eval of call_script;
+# the fallback keeps working if that ever stops being true.
+BACKEND_URL_JS = """
+  const apiURL = (path) => {
+    try { return new URL(path, getBackendURL(env.PING).href).href; }
+    catch (e) { return `${window.location.protocol}//${window.location.hostname}:8000${path}`; }
+  };
+"""
+
+
+def play_audio_script(audio_b64: str) -> str:
+    """JS that decodes the base64 wav the orchestrator's reply came with and plays it."""
+    return f"""
+(async () => {{
+  try {{
+    const bytes = Uint8Array.from(atob({json.dumps(audio_b64)}), (c) => c.charCodeAt(0));
+    const blob = new Blob([bytes], {{ type: "audio/wav" }});
+    new Audio(URL.createObjectURL(blob)).play();
+  }} catch (e) {{}}
+}})()
+"""
+
+# One click starts recording, the next stops it and transcribes. Returns a
+# JSON string so the handler can tell "started" apart from "here's the text".
+TOGGLE_RECORDING_JS = """
+(async () => {
+""" + BACKEND_URL_JS + """
+  const recorder = window.__voiceRecorder;
+
+  if (!recorder || recorder.state === "inactive") {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const rec = new MediaRecorder(stream);
+      window.__voiceChunks = [];
+      rec.ondataavailable = (e) => window.__voiceChunks.push(e.data);
+      rec.start();
+      window.__voiceRecorder = rec;
+      window.__voiceStream = stream;
+      return JSON.stringify({ recording: true });
+    } catch (e) {
+      return JSON.stringify({ recording: false, error: "No se pudo abrir el micro: " + e.message });
+    }
+  }
+
+  const stopped = new Promise((resolve) => { recorder.onstop = resolve; });
+  recorder.stop();
+  await stopped;
+  window.__voiceStream.getTracks().forEach((t) => t.stop());
+  window.__voiceRecorder = null;
+
+  const mime = (recorder.mimeType || "audio/webm").split(";")[0];
+  const ext = mime.includes("mp4") ? "mp4" : mime.includes("ogg") ? "ogg" : "webm";
+  const blob = new Blob(window.__voiceChunks, { type: mime });
+  if (!blob.size) return JSON.stringify({ recording: false, error: "No se grabó audio" });
+
+  const form = new FormData();
+  form.append("audio", blob, "clip." + ext);
+  try {
+    const res = await fetch(apiURL("/api/voice"), { method: "POST", body: form });
+    if (!res.ok) return JSON.stringify({ recording: false, error: "STT HTTP " + res.status });
+    const data = await res.json();
+    return JSON.stringify({ recording: false, text: data.text || "" });
+  } catch (e) {
+    return JSON.stringify({ recording: false, error: e.message });
+  }
+})()
+"""
 
 # --- Styles ---
 bg_dark = "#111111"
@@ -172,6 +286,22 @@ def chat_modal() -> rx.Component:
                         padding="1em",
                         border_radius="8px",
                         _hover={"bg": "#d32f2f"},
+                    ),
+                    rx.button(
+                        rx.cond(
+                            AgentState.is_recording,
+                            rx.icon("square", size=18),
+                            rx.icon("mic", size=18),
+                        ),
+                        on_click=rx.call_script(
+                            TOGGLE_RECORDING_JS,
+                            callback=AgentState.handle_voice,
+                        ),
+                        bg=rx.cond(AgentState.is_recording, "#d32f2f", "#333333"),
+                        color="white",
+                        padding="1em",
+                        border_radius="8px",
+                        _hover={"bg": "#444444"},
                     ),
                     width="100%",
                     padding_top="1em",
@@ -364,5 +494,6 @@ def index() -> rx.Component:
 
 app = rx.App(
     style=style,
+    api_transformer=voice_api,
 )
 app.add_page(index, title="KinoFiles OS")
