@@ -24,6 +24,17 @@ class State(TypedDict):
     farewell: str
 
 
+def prompt(text: str, options: list[str] | None = None) -> dict:
+    """Shape every interrupt hands back to the caller.
+
+    `text` is the part meant to be read aloud; `options` are picked from on
+    screen and must not be narrated — a list of titles makes for terrible
+    speech. Keeping them apart lets the I/O layer speak one and render the
+    other without having to guess where the sentence ends.
+    """
+    return {"text": text, "options": options or []}
+
+
 class OrquestratorAgent:
     def __init__(self, llm=None):
         self.llm = llm or ChatMistralAI(model="ministral-8b-2512", temperature=0)
@@ -46,7 +57,7 @@ class OrquestratorAgent:
 
     def user_input(self, state: State) -> State:
         """Ask the user what they feel like watching."""
-        text = interrupt("What do you feel like watching?")
+        text = interrupt(prompt("What do you feel like watching?"))
         return {"request": text, "feedback": [], "movies": []}
 
     def recommendation(self, state: State) -> State:
@@ -57,10 +68,10 @@ class OrquestratorAgent:
     def review(self, state: State) -> Command:
         """Let the user pick a movie, or collect feedback for another round."""
         movies = state["movies"]
-        answer = interrupt({
-            "movies": movies,
-            "question": f"Pick a number (1-{len(movies)}) or tell me what to change.",
-        }).strip()
+        answer = interrupt(prompt(
+            f"Pick a number (1-{len(movies)}) or tell me what to change.",
+            movies,
+        )).strip()
 
         if answer.isdigit() and 1 <= int(answer) <= len(movies):
             return Command(goto="goodbye", update={"choice": movies[int(answer) - 1]})
@@ -78,7 +89,10 @@ class OrquestratorAgent:
         config = {"configurable": {"thread_id": thread_id}}
         event = self.graph.invoke({}, config)
         while "__interrupt__" in event:
-            print(event["__interrupt__"][0].value)
+            pending = event["__interrupt__"][0].value
+            print(pending["text"])
+            for i, option in enumerate(pending["options"], 1):
+                print(f"{i}. {option}")
             event = self.graph.invoke(Command(resume=input("> ")), config)
         print(event["farewell"])
         return event["choice"]
