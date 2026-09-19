@@ -1,11 +1,15 @@
+import sys
+import os
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 from dotenv import load_dotenv
 load_dotenv()  # Ensures .env is loaded
 
-from agent.router_orchestrator import RouterOrchestratorAgent
+from agent.router_orchestrator import RecommendationAgent
 
 def test_direct_request():
     print("Initializing router orchestrator with local Ollama...")
-    agent = RouterOrchestratorAgent()
+    agent = RecommendationAgent()
     
     print("\nOrchestrator ready! Type 'exit' or 'quit' to stop.")
     while True:
