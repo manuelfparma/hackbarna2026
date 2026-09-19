@@ -8,4 +8,5 @@ dependencies = [
     "kaggle>=2.2.4",
     "pandas>=3.0.6",
     "pyarrow>=25.0.1",
+    "supabase>=2.31.0",
 ]
