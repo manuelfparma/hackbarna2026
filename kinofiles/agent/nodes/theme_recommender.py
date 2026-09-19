@@ -1,6 +1,6 @@
 """Theme-based recommendation: nearest themes via pgvector, then movies."""
 
-from data_management.embeddings_pipeline import EMBEDDING_MODEL, _client, _load_env
+from data_management.theme_embeddings_pipeline import EMBEDDING_MODEL, _client, _load_env
 from langchain_mistralai import MistralAIEmbeddings
 
 MATCH_COUNT = 10
