@@ -32,8 +32,8 @@ You will need a Kaggle account and an API token to download the source dataset.
 ### Setting Up the Database
 Before uploading the data, you must initialize the database table.
 1. Open the **SQL Editor** in your Supabase dashboard.
-2. Copy and execute the exact SQL query found in `data_management/create_movies_table.sql`.
-   *This script sets up the table schema and configures powerful GIN indexes so array columns (like genres, themes, and actors) can be queried at lightning speed.*
+2. Copy and execute the exact SQL query found in `data_management/create_schema.sql`.
+   *This script sets up the movies table, GIN indexes for array columns (genres, themes, actors), and the theme/description embedding tables plus match RPCs.*
 
 ### Running the Pipeline
 We use `uv` to manage dependencies. Run the following commands from this directory (`kinofiles`):
