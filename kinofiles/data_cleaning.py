@@ -114,9 +114,20 @@ def build_movie_dataset(data_dir="data"):
     merged['date'] = merged['date'].astype(int)
     merged['minute'] = pd.to_numeric(merged['minute'], errors='coerce').fillna(0).astype(int)
     
+    # Categorize duration
+    def categorize_duration(mins):
+        if mins < 100:
+            return "Short"
+        elif mins < 130:
+            return "Standard"
+        else:
+            return "Long"
+            
+    merged['duration_category'] = merged['minute'].apply(categorize_duration)
+    
     # Select only the final list of columns specified by the user
     final_columns = [
-        'id', 'name', 'date', 'tagline', 'description', 'minute', 'rating',
+        'id', 'name', 'date', 'tagline', 'description', 'minute', 'duration_category', 'rating',
         'genres', 'themes', 'studios', 'languages', 'actors', 'directors'
     ]
     merged = merged[final_columns]
