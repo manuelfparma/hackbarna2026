@@ -219,7 +219,5 @@ __marimo__/
 
 .idea
 
-# Ignore downloaded Kaggle datasets and generated datasets
-kinofiles/data/*.csv
-kinofiles/data/*.jsonl
-kinofiles/data/*.zip
+data/*
+kinofiles/data/*
