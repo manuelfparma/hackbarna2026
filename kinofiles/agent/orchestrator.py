@@ -1,8 +1,26 @@
 """Movie recommendation orchestrator built with LangGraph.
 
-Flow:  input (interrupt) -> recommendation (subagent) -> review (interrupt) -> ...
-The input node is plain text for now; later it gets replaced by other I/O
-subagents.
+Flow:  welcome (interrupt) -> conversation (RecommendationAgent subgraph)
+       -> goodbye
+
+The conversation node *is* the recommendation subagent, compiled graph and
+all. That subagent pauses on its own whenever it needs the user, and those
+interrupts surface right here on the parent's `__interrupt__` — resuming from
+this graph lands back inside it at the exact node that paused. So handing the
+pause down costs the orchestrator nothing: it still mediates every turn.
+
+What stays at this layer is what no single capability can own:
+
+- session lifecycle — when the conversation is over, and the farewell
+- I/O modality — speech in and out (`io/tts.py`, `io/stt.py`), and the
+  `prompt()` contract splitting what gets narrated from what gets rendered
+- capability composition — recommendation is the first subagent; the next
+  ones (watchlist, availability, trailers) plug in here rather than being
+  bolted into the recommender's classifier
+
+`State` is deliberately a superset of the subagent's: LangGraph only
+propagates keys the parent declares, so leaving out `response` or `intent`
+would silently discard everything the subagent generated.
 """
 
 from typing import TypedDict
@@ -12,76 +30,57 @@ from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.graph import END, StateGraph
 from langgraph.types import Command, interrupt
 
+from agent.io.turn import prompt
 from agent.llm import build_llm
-from agent.nodes.recommender import Recommender
+from agent.recomedation_agent import RecommendationAgent
 
 
 class State(TypedDict):
     request: str
+    intent: str
+    column: str | None
+    value: str | None
+    entities: dict
     feedback: list[str]
     movies: list[str]
+    response: str
     choice: str
     farewell: str
-
-
-def prompt(text: str, options: list[str] | None = None) -> dict:
-    """Shape every interrupt hands back to the caller.
-
-    `text` is the part meant to be read aloud; `options` are picked from on
-    screen and must not be narrated — a list of titles makes for terrible
-    speech. Keeping them apart lets the I/O layer speak one and render the
-    other without having to guess where the sentence ends.
-    """
-    return {"text": text, "options": options or []}
 
 
 class OrquestratorAgent:
     def __init__(self, llm=None):
         self.llm = llm or build_llm()
-        self.recommender = Recommender(self.llm)
+        # No checkpointer of its own: it borrows this graph's, so a resume
+        # sent here reaches the interrupt waiting inside it.
+        self.recommendation_agent = RecommendationAgent(self.llm, checkpointer=None)
         self.graph = self._build_graph()
 
     def _build_graph(self):
         graph = StateGraph(State)
-        graph.add_node("user_input", self.user_input)
-        graph.add_node("recommendation", self.recommendation)
-        graph.add_node("review", self.review)
+        graph.add_node("welcome", self.welcome)
+        graph.add_node("conversation", self.recommendation_agent.graph)
         graph.add_node("goodbye", self.goodbye)
 
-        graph.set_entry_point("user_input")
-        graph.add_edge("user_input", "recommendation")
-        graph.add_edge("recommendation", "review")
+        graph.set_entry_point("welcome")
+        graph.add_edge("welcome", "conversation")
+        graph.add_edge("conversation", "goodbye")
         graph.add_edge("goodbye", END)
 
         return graph.compile(checkpointer=InMemorySaver())
 
-    def user_input(self, state: State) -> State:
-        """Ask the user what they feel like watching."""
+    def welcome(self, state: State) -> State:
+        """Open the session and collect the first message.
+
+        The only question this layer asks: starting a session is its job,
+        while every follow-up is the subagent's, because only the subagent
+        knows what it still needs to know.
+        """
         text = interrupt(prompt("What do you feel like watching?"))
-        return {"request": text, "feedback": [], "movies": []}
-
-    def recommendation(self, state: State) -> State:
-        """Call the recommendation subagent."""
-        movies = self.recommender.recommend(state["request"], state["feedback"])
-        return {"movies": movies}
-
-    def review(self, state: State) -> Command:
-        """Let the user pick a movie, or collect feedback for another round."""
-        movies = state["movies"]
-        answer = interrupt(prompt(
-            f"Pick a number (1-{len(movies)}) or tell me what to change.",
-            movies,
-        )).strip()
-
-        if answer.isdigit() and 1 <= int(answer) <= len(movies):
-            return Command(goto="goodbye", update={"choice": movies[int(answer) - 1]})
-        return Command(
-            goto="recommendation",
-            update={"feedback": state["feedback"] + [answer]},
-        )
+        return {"request": text, "feedback": [], "movies": [], "response": ""}
 
     def goodbye(self, state: State) -> State:
-        """Close the session once the user has picked a movie."""
+        """Close the session once the subagent reports a pick."""
         return {"farewell": f"Enjoy {state['choice']}! Goodbye."}
 
     def run(self, thread_id: str = "1") -> str:
@@ -96,6 +95,22 @@ class OrquestratorAgent:
             event = self.graph.invoke(Command(resume=input("> ")), config)
         print(event["farewell"])
         return event["choice"]
+
+    def pending_state(self, thread_id: str = "1") -> dict:
+        """Everything the subagent holds while it sits paused.
+
+        A paused subgraph publishes nothing to the parent — its writes only
+        land once its node returns — so the interrupt payload is normally the
+        whole story. This reaches past that when the orchestrator needs the
+        subagent's working state to apply policy (logging, a fallback when
+        the shortlist came back empty) without the subagent having to
+        anticipate it. Returns `{}` when nothing is paused.
+        """
+        config = {"configurable": {"thread_id": thread_id}}
+        for task in self.graph.get_state(config, subgraphs=True).tasks:
+            if task.state:
+                return dict(task.state.values)
+        return {}
 
 
 if __name__ == "__main__":
