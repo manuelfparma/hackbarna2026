@@ -35,6 +35,7 @@ class AgentState(rx.State):
     posters: dict[str, str] = {}
     selected: str = ""
     is_done: bool = False
+    search_criteria: dict = {}
 
     def set_current_input(self, val: str):
         self.current_input = val
@@ -159,6 +160,25 @@ class AgentState(rx.State):
         return self.selected != ""
 
     @rx.var
+    def criteria_badges(self) -> list[str]:
+        if not self.search_criteria:
+            return []
+        badges = []
+        for k, v in self.search_criteria.items():
+            if not v:
+                continue
+            if isinstance(v, list):
+                for item in v:
+                    badges.append(f"{item}")
+            else:
+                badges.append(f"{k}: {v}")
+        return badges
+
+    @rx.var
+    def has_criteria(self) -> bool:
+        return len(self.criteria_badges) > 0
+
+    @rx.var
     def selected_poster(self) -> str:
         return self.posters.get(self.selected, "")
 
@@ -201,6 +221,8 @@ class AgentState(rx.State):
             if choice := data.get("choice"):
                 self.selected = choice
             self.is_done = data.get("status") == "done"
+            if "criteria" in data:
+                self.search_criteria = data["criteria"]
         except Exception as e:
             self.messages.append({"role": "agent", "content": f"Error: {str(e)}"})
 
@@ -228,6 +250,7 @@ class AgentState(rx.State):
         self.current_input = ""
         self.thread_id = str(uuid.uuid4())
         self.current_name = random.choice(["Alba", "Carla", "Nuria"])
+        self.search_criteria = {}
         yield AgentState.start_agent
 
     async def start_agent(self):
@@ -829,7 +852,16 @@ def movie_rail() -> rx.Component:
                     spacing="1",
                     align="start",
                 ),
-                pill(AgentState.movie_count),
+                rx.cond(
+                    AgentState.has_criteria,
+                    rx.hstack(
+                        rx.foreach(AgentState.criteria_badges, lambda c: pill(c)),
+                        spacing="2",
+                        wrap="wrap",
+                        justify="end",
+                    ),
+                    rx.box()
+                ),
                 justify="between",
                 align="center",
                 width="100%",
@@ -895,6 +927,64 @@ def empty_rail() -> rx.Component:
     )
 
 
+def fake_player() -> rx.Component:
+    """A fake full-screen video player that appears when a movie is chosen."""
+    return rx.box(
+        rx.box(
+            rx.cond(
+                AgentState.selected_poster != "",
+                rx.image(
+                    src=AgentState.selected_poster,
+                    position="absolute",
+                    inset="0",
+                    width="100%",
+                    height="100%",
+                    object_fit="cover",
+                    opacity="0.2",
+                    filter="blur(20px)",
+                ),
+                rx.box()
+            ),
+            rx.center(
+                rx.vstack(
+                    rx.icon("play", size=80, color="white", opacity="0.9"),
+                    rx.heading(AgentState.selected, size="8", color="white", margin_top="1rem", text_align="center"),
+                    rx.text("Now Playing", font_size="1.2rem", color="rgba(255,255,255,0.6)", text_transform="uppercase", letter_spacing="0.1em"),
+                    spacing="3",
+                    align="center",
+                    z_index="1",
+                ),
+                width="100%",
+                height="100%",
+            ),
+            rx.icon(
+                "x",
+                size=30,
+                color="white",
+                position="absolute",
+                top="2rem",
+                right="3rem",
+                cursor="pointer",
+                z_index="2",
+                on_click=AgentState.set_is_done(False),
+                opacity="0.6",
+                _hover={"opacity": "1"}
+            ),
+            position="relative",
+            width="100%",
+            height="100%",
+            overflow="hidden",
+        ),
+        position="fixed",
+        inset="0",
+        z_index="100",
+        background="linear-gradient(135deg, rgba(15,15,20,1) 0%, rgba(0,0,0,1) 100%)",
+        opacity=rx.cond(AgentState.is_done, "1", "0"),
+        pointer_events=rx.cond(AgentState.is_done, "auto", "none"),
+        transition="opacity 1.2s ease-in-out",
+    )
+
+
 # --- Pages ---
 def agent_tv_panel() -> rx.Component:
     return rx.box(
@@ -957,7 +1047,8 @@ def agent_tv_panel() -> rx.Component:
             overflow="hidden",
             position="relative",
             animation="fade-in .7s ease-out both",
-        )
+        ),
+        fake_player()
     )
 
 
