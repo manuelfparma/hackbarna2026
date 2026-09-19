@@ -1,33 +1,40 @@
-"""Welcome to Reflex! This file outlines the streaming dashboard app."""
+"""KinoFiles: a TV-style surface for the recommendation agent.
+
+Two pages. `/` is the launcher; `/agent` is where the conversation happens —
+what the agent just said, the films it proposed, and the one currently in
+focus, all on screen at once so a remote (or a voice) only ever has to move
+between three things.
+"""
 
 import asyncio
+import datetime
 import json
-
-import reflex as rx
+import random
 import uuid
 
-def format_reply(data: dict) -> str:
-    """Render a turn for the chat: spoken text first, then the options.
+import reflex as rx
 
-    The API keeps options out of `reply` so TTS never reads a numbered list
-    aloud; they still belong on screen, so they get stitched back in here.
-    """
-    text = data.get("reply", "")
-    options = data.get("options") or []
-    if not options:
-        return text
-    listed = "\n".join(f"{i}. {option}" for i, option in enumerate(options, 1))
-    return f"{text}\n\n{listed}"
+from .posters import poster_urls
 
 
 # --- State ---
 class AgentState(rx.State):
-    show_chat: bool = False
     messages: list[dict[str, str]] = []
     current_input: str = ""
     thread_id: str = ""
     is_loading: bool = False
+    show_user_query: bool = False
+    is_booting: bool = True
     is_recording: bool = False
+    current_name: str = random.choice(["Alba", "Carla", "Nuria"])
+
+    # The titles the agent last put on the table, the art found for them, and
+    # the one the viewer is looking at. `selected` is only a highlight until
+    # `confirm_selection` sends it back as the answer.
+    options: list[str] = []
+    posters: dict[str, str] = {}
+    selected: str = ""
+    is_done: bool = False
 
     def set_current_input(self, val: str):
         self.current_input = val
@@ -38,7 +45,7 @@ class AgentState(rx.State):
         self.is_recording = bool(outcome.get("recording"))
 
         if error := outcome.get("error"):
-            self.messages.append({"role": "agent", "content": f"Error de voz: {error}"})
+            self.messages.append({"role": "agent", "content": f"Voice error: {error}"})
             return
 
         text = (outcome.get("text") or "").strip()
@@ -47,11 +54,121 @@ class AgentState(rx.State):
         self.current_input = text
         return AgentState.send_message
 
-    def toggle_chat(self):
-        self.show_chat = not self.show_chat
-        if self.show_chat and not self.thread_id:
-            self.thread_id = str(uuid.uuid4())
-            return AgentState.start_agent
+    async def open_tv_agent(self):
+        yield rx.redirect("/agent")
+
+    async def select_movie(self, title: str):
+        """Pick the film and confirm it immediately."""
+        self.selected = title
+        async for event in self.confirm_selection():
+            yield event
+
+    def hover_movie(self, title: str):
+        """Highlight a movie when mouse enters."""
+        self.selected = title
+
+    async def handle_key(self, key: str):
+        """Handle keyboard arrows and enter to navigate/select."""
+        if key == "ArrowRight":
+            self.select_next()
+        elif key == "ArrowLeft":
+            self.select_prev()
+        elif key == "Enter":
+            if self.selected:
+                async for event in self.confirm_selection():
+                    yield event
+
+    def select_next(self):
+        if not self.options:
+            return
+        try:
+            idx = self.options.index(self.selected)
+            self.selected = self.options[(idx + 1) % len(self.options)]
+        except ValueError:
+            pass
+
+    def select_prev(self):
+        if not self.options:
+            return
+        try:
+            idx = self.options.index(self.selected)
+            self.selected = self.options[(idx - 1) % len(self.options)]
+        except ValueError:
+            pass
+
+    @rx.var
+    def latest_message(self) -> str:
+        if not self.messages:
+            return ""
+        msg = self.messages[-1]
+        if msg["role"] == "user":
+            return "You · " + msg["content"].splitlines()[0]
+        return msg["content"]
+
+    @rx.var
+    def is_user_turn(self) -> bool:
+        if not self.messages:
+            return False
+        return self.messages[-1]["role"] == "user"
+
+    @rx.var
+    def show_user_message(self) -> bool:
+        if not self.messages:
+            return False
+        if self.messages[-1]["role"] == "user":
+            return self.show_user_query
+        return True
+
+    @rx.var
+    def has_messages(self) -> bool:
+        return len(self.messages) > 0
+
+    @rx.var
+    def history(self) -> list[dict[str, str]]:
+        """The turns before this one, fading out as they age."""
+        past = self.messages[:-1][-3:]
+        fades = ["0.2", "0.35", "0.55"][-len(past) :]
+        return [
+            {
+                "content": message["content"].splitlines()[0],
+                "opacity": fade,
+                "prefix": "You · " if message["role"] == "user" else "",
+            }
+            for message, fade in zip(past, fades)
+        ]
+
+    @rx.var
+    def movies(self) -> list[dict[str, str]]:
+        """The current options, dressed for the rail."""
+        return [
+            {
+                "title": title,
+                "poster": self.posters.get(title, ""),
+                "number": str(i),
+                "initial": title[:1].upper(),
+            }
+            for i, title in enumerate(self.options, 1)
+        ]
+
+    @rx.var
+    def has_movies(self) -> bool:
+        return len(self.options) > 0
+
+    @rx.var
+    def has_selection(self) -> bool:
+        return self.selected != ""
+
+    @rx.var
+    def selected_poster(self) -> str:
+        return self.posters.get(self.selected, "")
+
+    @rx.var
+    def selected_initial(self) -> str:
+        return self.selected[:1].upper()
+
+    @rx.var
+    def movie_count(self) -> str:
+        return f"{len(self.options)} movies"
 
     async def _turn(self, message: str | None):
         """Run one orchestrator turn and show its reply, narration included.
@@ -66,32 +183,102 @@ class AgentState(rx.State):
             data = await asyncio.to_thread(
                 chat_with_agent, ChatRequest(thread_id=self.thread_id, message=message)
             )
-            self.messages.append({"role": "agent", "content": format_reply(data)})
-            audio_b64 = data.get("audio")
+            if message is not None:
+                self.messages.append({"role": "agent", "content": data.get("reply", "")})
+                audio_b64 = data.get("audio")
+            else:
+                import base64
+                from .api import tts
+                greeting = f"Hey {self.current_name}, what do you feel like watching?"
+                audio_bytes = await asyncio.to_thread(tts.synthesize, greeting)
+                audio_b64 = base64.b64encode(audio_bytes).decode()
+
+            # Options are the films on offer; a choice means the agent has
+            # settled on one, so it takes the spotlight.
+            if options := data.get("options"):
+                self.options = options
+                self.selected = options[0]
+            if choice := data.get("choice"):
+                self.selected = choice
+            self.is_done = data.get("status") == "done"
         except Exception as e:
             self.messages.append({"role": "agent", "content": f"Error: {str(e)}"})
 
         self.is_loading = False
         if audio_b64:
             yield rx.call_script(play_audio_script(audio_b64))
+        else:
+            yield
+
+        # Finding the art means scanning a large catalogue file, so it runs
+        # after the reply is already on screen.
+        missing = [title for title in self.options if title not in self.posters]
+        if missing:
+            found = await asyncio.to_thread(poster_urls, missing)
+            self.posters = {**self.posters, **found}
+
+    async def reset_agent(self):
+        """Reset the conversation state and start fresh."""
+        self.messages = []
+        self.options = []
+        self.selected = ""
+        self.is_done = False
+        self.is_loading = False
+        self.is_booting = True
+        self.current_input = ""
+        self.thread_id = str(uuid.uuid4())
+        self.current_name = random.choice(["Alba", "Carla", "Nuria"])
+        yield AgentState.start_agent
 
     async def start_agent(self):
         self.is_loading = True
         yield
         async for event in self._turn(None):
             yield event
+        await asyncio.sleep(0.7)  # Sync fade-in with audio startup
+        self.is_booting = False
+        yield
+
+    async def _send(self, message: str, shown: str | None = None):
+        self.messages.append({"role": "user", "content": shown or message})
+        self.current_input = ""
+        self.is_loading = True
+        self.show_user_query = False
+        yield
+
+        async def run_turn():
+            events = []
+            async for event in self._turn(message):
+                events.append(event)
+            return events
+
+        turn_task = asyncio.create_task(run_turn())
+        done, pending = await asyncio.wait([turn_task], timeout=5.0)
+
+        if not done:
+            self.show_user_query = True
+            yield
+            await turn_task
+
+        for event in turn_task.result():
+            yield event
 
     async def send_message(self):
         if not self.current_input.strip():
             return
+        async for event in self._send(self.current_input):
+            yield event
 
-        user_msg = self.current_input
-        self.messages.append({"role": "user", "content": user_msg})
-        self.current_input = ""
-        self.is_loading = True
-        yield
+    async def confirm_selection(self):
+        """Answer the agent's question by picking the film in the spotlight.
 
-        async for event in self._turn(user_msg):
+        The review node reads a 1-based number, but the viewer clicked a
+        poster, so the title is what goes into the transcript.
+        """
+        if self.is_loading or self.selected not in self.options:
+            return
+        number = str(self.options.index(self.selected) + 1)
+        async for event in self._send(number, shown=self.selected):
             yield event
 
 
@@ -141,7 +328,7 @@ TOGGLE_RECORDING_JS = """
       window.__voiceStream = stream;
       return JSON.stringify({ recording: true });
     } catch (e) {
-      return JSON.stringify({ recording: false, error: "No se pudo abrir el micro: " + e.message });
+      return JSON.stringify({ recording: false, error: "Could not open microphone: " + e.message });
     }
   }
 
@@ -154,7 +341,7 @@ TOGGLE_RECORDING_JS = """
   const mime = (recorder.mimeType || "audio/webm").split(";")[0];
   const ext = mime.includes("mp4") ? "mp4" : mime.includes("ogg") ? "ogg" : "webm";
   const blob = new Blob(window.__voiceChunks, { type: mime });
-  if (!blob.size) return JSON.stringify({ recording: false, error: "No se grabó audio" });
+  if (!blob.size) return JSON.stringify({ recording: false, error: "No audio recorded" });
 
   const form = new FormData();
   form.append("audio", blob, "clip." + ext);
@@ -169,331 +356,761 @@ TOGGLE_RECORDING_JS = """
 })()
 """
 
-# --- Styles ---
-bg_dark = "#111111"
-text_light = "#e5e5e5"
-text_muted = "#999999"
-titan_red = "#F4434B"
-titan_blue = "#176B9C"
+# --- Design tokens ---
+# A light room with white cards floating in it; titan pink is the only accent,
+# so anything pink is either the brand or something the viewer can act on.
+CANVAS = "#E8E8EB"
+SURFACE = "#FFFFFF"
+INK = "#15151A"
+MUTED = "#8B8B94"
+FAINT = "#C6C6CE"
+HAIRLINE = "rgba(21, 21, 26, 0.07)"
+TINT = "#F2F2F5"
+PINK = "#F4434B"
+PINK_DEEP = "#DE3A42"
+PINK_SOFT = "#FFECED"
+
+SHADOW = "0 24px 60px rgba(20, 20, 30, 0.10), 0 2px 6px rgba(20, 20, 30, 0.04)"
+SHADOW_SM = "0 10px 28px rgba(20, 20, 30, 0.07)"
+SHADOW_LIFT = "0 30px 60px rgba(20, 20, 30, 0.16)"
+RADIUS = "30px"
 
 style = {
-    "background_color": bg_dark,
-    "color": text_light,
-    "font_family": "Helvetica Neue, Helvetica, Arial, sans-serif",
+    "background_color": "#000",
+    "color": INK,
+    "font_family": "Inter, 'Helvetica Neue', Helvetica, Arial, sans-serif",
     "min_height": "100vh",
     "margin": "0",
     "padding": "0",
 }
 
-# --- Components ---
+GLOBAL_CSS = """
+<style>
+  @keyframes rise { from { opacity: 0; transform: translateY(16px); } to { opacity: 1; transform: none; } }
+  @keyframes glide { from { opacity: 0; transform: translateX(24px); } to { opacity: 1; transform: none; } }
+  @keyframes breathe {
+    0%, 100% { transform: scale(1) translateX(0); }
+    50% { transform: scale(1.12) translateX(12px); }
+  }
+  @keyframes blink { 0%, 100% { opacity: 0.15; } 50% { opacity: 1; } }
+  @keyframes tv-on {
+    0%   { clip-path: inset(50% 0 50% 0); filter: brightness(3); opacity: 0; }
+    30%  { clip-path: inset(49.5% 0 49.5% 0); filter: brightness(4); opacity: 1; }
+    60%  { clip-path: inset(20% 0 20% 0); filter: brightness(1.6); }
+    100% { clip-path: inset(0 0 0 0); filter: brightness(1); }
+  }
+  @keyframes fade-in {
+    from { opacity: 0; filter: blur(15px); }
+    to { opacity: 1; filter: blur(0); }
+  }
+  @keyframes pulse-light {
+    0% { opacity: 0.3; transform: scale(0.95); }
+    50% { opacity: 1; transform: scale(1.05); filter: drop-shadow(0 0 8px rgba(244,67,75,0.6)); }
+    100% { opacity: 0.3; transform: scale(0.95); }
+  }
+  @keyframes blink {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.5; }
+  }
+  .rail::-webkit-scrollbar { display: none; }
+  .rail { scrollbar-width: none; -ms-overflow-style: none; }
+</style>
+"""
 
-def navbar() -> rx.Component:
+
+# --- Building blocks ---
+def card(*children, **props) -> rx.Component:
+    """A white panel floating on the canvas."""
+    return rx.box(
+        *children,
+        bg=SURFACE,
+        border=f"1px solid {HAIRLINE}",
+        border_radius=RADIUS,
+        box_shadow=SHADOW,
+        **props,
+    )
+
+
+def caption(text, **props) -> rx.Component:
+    """The small grey line that names a section."""
+    return rx.text(
+        text,
+        font_size="0.68rem",
+        font_weight="500",
+        letter_spacing="0.18em",
+        text_transform="uppercase",
+        color=MUTED,
+        **props,
+    )
+
+
+def pill(content, accent=False, **props) -> rx.Component:
+    """A small tag. `accent` may be a Var, so the colours branch at render time."""
+    return rx.box(
+        rx.text(content, font_size="0.68rem", font_weight="500", line_height="1"),
+        bg=rx.cond(accent, PINK_SOFT, TINT),
+        color=rx.cond(accent, PINK, MUTED),
+        padding="0.42em 0.78em",
+        border_radius="999px",
+        white_space="nowrap",
+        flex_shrink="0",
+        **props,
+    )
+
+
+def ambient() -> rx.Component:
+    """The soft colour bloom the whole room sits in."""
+    return rx.box(
+        position="fixed",
+        inset="0",
+        pointer_events="none",
+        z_index="0",
+        background_image=(
+            "radial-gradient(40% 60% at 5% 50%, rgba(244,67,75,0.16) 0%, rgba(244,67,75,0) 70%),"
+            "radial-gradient(30% 50% at 30% 40%, rgba(255,160,180,0.13) 0%, rgba(255,160,180,0) 70%),"
+            "radial-gradient(35% 55% at 50% 50%, rgba(180,140,255,0.12) 0%, rgba(180,140,255,0) 70%),"
+            "radial-gradient(35% 55% at 75% 45%, rgba(140,160,255,0.11) 0%, rgba(140,160,255,0) 70%),"
+            "radial-gradient(30% 50% at 95% 50%, rgba(200,210,255,0.10) 0%, rgba(200,210,255,0) 70%)"
+        ),
+        filter="blur(40px)",
+    )
+
+
+def status_bar(back: bool = False) -> rx.Component:
+    """The TV chrome: who we are on the left, time and weather on the right."""
+    brand = rx.hstack(
+        rx.box(width="11px", height="11px", border_radius="50%", bg=PINK),
+        rx.text("KinoFiles", font_weight="600", letter_spacing="-0.01em"),
+        spacing="2",
+        align="center",
+    )
+    home_button = rx.hstack(
+        rx.icon("chevron-left", size=18, color=INK),
+        rx.text("Home", font_size="0.9rem", font_weight="500"),
+        spacing="1",
+        align="center",
+        bg=SURFACE,
+        border=f"1px solid {HAIRLINE}",
+        box_shadow=SHADOW_SM,
+        padding="0.5em 1em 0.5em 0.7em",
+        border_radius="999px",
+        cursor="pointer",
+        on_click=rx.redirect("/"),
+        _hover={"box_shadow": SHADOW, "transform": "translateY(-1px)"},
+        transition="all .2s ease",
+    )
     return rx.hstack(
+        rx.hstack(*([home_button, brand] if back else [brand]), spacing="4", align="center"),
         rx.hstack(
-            rx.icon("search", color=text_light, size=20, margin_right="1em"),
+            rx.icon("sun", size=16, color=MUTED),
+            rx.text("18°", color=MUTED, font_size="0.9rem"),
+            rx.box(width="1px", height="16px", bg=FAINT),
             rx.vstack(
-                rx.text("Home", weight="bold", font_size="1.1em"),
-                rx.box(width="100%", height="2px", bg="white"),
+                rx.text(datetime.datetime.now().strftime("%H:%M"), font_weight="600", font_size="0.95rem", line_height="1"),
+                rx.text(datetime.datetime.now().strftime("%A, %B %d"), font_size="0.7rem", color=MUTED, line_height="1"),
                 spacing="1",
-                align_items="center"
+                align="end",
             ),
-            rx.text("Channels", color=text_muted, font_size="1.1em", _hover={"color": "white"}),
-            rx.text("Apps", color=text_muted, font_size="1.1em", _hover={"color": "white"}),
-            spacing="6",
-            align_items="center",
+            spacing="3",
+            align="center",
         ),
-        rx.hstack(
-            rx.icon("user", color=text_muted, size=20),
-            rx.icon("settings", color=text_muted, size=20),
-            rx.text("10:15", color=text_muted, font_size="1.1em"),
-            spacing="5",
-            align_items="center",
-        ),
-        width="100%",
-        padding_x="4%",
-        padding_top="2em",
-        padding_bottom="1em",
-        position="absolute",
-        top="0",
-        z_index="999",
         justify="between",
-        animation="fadeInDown 0.8s ease-out",
-    )
-
-def message_bubble(msg: dict) -> rx.Component:
-    is_user = msg["role"] == "user"
-    return rx.box(
-        rx.markdown(msg["content"]),
-        bg=rx.cond(is_user, titan_blue, "#333333"),
-        color="white",
-        padding="1em",
-        border_radius="12px",
-        margin_bottom="1em",
-        align_self=rx.cond(is_user, "flex-end", "flex-start"),
-        max_width="80%",
-        animation="fadeInUp 0.3s ease-out",
-        box_shadow="0 4px 6px rgba(0, 0, 0, 0.3)",
-    )
-
-def chat_modal() -> rx.Component:
-    return rx.cond(
-        AgentState.show_chat,
-        rx.box(
-            rx.vstack(
-                # Header
-                rx.hstack(
-                    rx.text("KinoFiles Agent", font_weight="bold", font_size="1.2em"),
-                    rx.icon("x", cursor="pointer", on_click=AgentState.toggle_chat, _hover={"color": titan_red}),
-                    justify="between",
-                    width="100%",
-                    padding_bottom="1em",
-                    border_bottom="1px solid #444",
-                ),
-                # Messages Area
-                rx.vstack(
-                    rx.foreach(AgentState.messages, message_bubble),
-                    rx.cond(
-                        AgentState.is_loading,
-                        rx.spinner(color=titan_red, size="2"),
-                    ),
-                    width="100%",
-                    flex="1",
-                    overflow_y="auto",
-                    padding_y="1em",
-                    spacing="3",
-                    align_items="stretch",
-                ),
-                # Input Area
-                rx.hstack(
-                    rx.input(
-                        placeholder="Escribe tu respuesta...",
-                        value=AgentState.current_input,
-                        on_change=AgentState.set_current_input,
-                        on_key_down=rx.call_script("if(event.key === 'Enter') { document.getElementById('send_btn').click(); }"),
-                        bg="#222222",
-                        border="1px solid #444",
-                        color="white",
-                        width="100%",
-                        padding="0.8em",
-                        border_radius="8px",
-                    ),
-                    rx.button(
-                        rx.icon("send", size=18),
-                        id="send_btn",
-                        on_click=AgentState.send_message,
-                        bg=titan_red,
-                        color="white",
-                        padding="1em",
-                        border_radius="8px",
-                        _hover={"bg": "#d32f2f"},
-                    ),
-                    rx.button(
-                        rx.cond(
-                            AgentState.is_recording,
-                            rx.icon("square", size=18),
-                            rx.icon("mic", size=18),
-                        ),
-                        on_click=rx.call_script(
-                            TOGGLE_RECORDING_JS,
-                            callback=AgentState.handle_voice,
-                        ),
-                        bg=rx.cond(AgentState.is_recording, "#d32f2f", "#333333"),
-                        color="white",
-                        padding="1em",
-                        border_radius="8px",
-                        _hover={"bg": "#444444"},
-                    ),
-                    width="100%",
-                    padding_top="1em",
-                ),
-                width="100%",
-                height="100%",
-                padding="1.5em",
-            ),
-            position="fixed",
-            top="10%",
-            right="5%",
-            width="400px",
-            height="80vh",
-            bg="rgba(25, 25, 25, 0.95)",
-            backdrop_filter="blur(10px)",
-            border="1px solid #333",
-            border_radius="16px",
-            z_index="1000",
-            box_shadow="0 10px 30px rgba(0, 0, 0, 0.5)",
-            animation="slideInRight 0.4s ease-out",
-        ),
-        rx.box()
-    )
-
-def hero() -> rx.Component:
-    return rx.box(
-        rx.vstack(
-            rx.hstack(
-                rx.icon("bot", size=24, color=titan_red, animation="pulse 2s infinite"),
-                rx.text("KinoFiles AI", color=text_light, font_weight="bold", font_size="1em"),
-                spacing="2",
-                align_items="center",
-                margin_bottom="0.5em",
-                animation="fadeInUp 0.8s ease-out",
-            ),
-            rx.heading("Kino Files Agent", size="9", weight="bold", letter_spacing="-1px", margin_bottom="0.5em", animation="fadeInUp 1s ease-out"),
-            rx.text(
-                "Tu asistente inteligente para explorar el universo cinematográfico. "
-                "Descubre joyas ocultas, recibe recomendaciones personalizadas y encuentra "
-                "la película perfecta basándote en tus gustos y estado de ánimo actual.",
-                max_width="60%",
-                font_size="1.1em",
-                color="#cccccc",
-                margin_bottom="2em",
-                line_height="1.5",
-                animation="fadeInUp 1.2s ease-out",
-            ),
-            rx.button(
-                "Lanzar agente", 
-                on_click=AgentState.toggle_chat,
-                bg=titan_blue, 
-                color="white", 
-                font_size="1.1em",
-                font_weight="bold",
-                padding_x="2em", 
-                padding_y="1.5em",
-                border_radius="9999px",
-                _hover={"bg": "#125a83", "transform": "scale(1.05)", "box_shadow": "0 0 15px rgba(23, 107, 156, 0.6)"},
-                transition="all 0.2s ease-in-out",
-                animation="fadeInUp 1.4s ease-out",
-            ),
-            align_items="flex-start",
-            width="100%",
-        ),
-        padding_x="4%",
+        align="center",
         width="100%",
-        align_items="center",
-        position="relative",
-        z_index="2"
     )
 
-def app_tile(name: str, color: str, index: int) -> rx.Component:
+
+# --- Agent panel (what the agent is saying) ---
+def ghost_line(line: dict[str, str]) -> rx.Component:
+    """An older turn, kept on screen but receding."""
+    return rx.text(
+        line["prefix"] + line["content"],
+        font_size="1.05rem",
+        color=INK,
+        opacity=line["opacity"],
+        line_height="1.45",
+        max_width="100%",
+        overflow="hidden",
+        text_overflow="ellipsis",
+        white_space="nowrap",
+    )
+
+
+def thinking_dots() -> rx.Component:
+    return rx.hstack(
+        *[
+            rx.box(
+                width="7px",
+                height="7px",
+                border_radius="50%",
+                bg=PINK,
+                animation=f"blink 1.2s ease-in-out {i * 0.18}s infinite",
+            )
+            for i in range(3)
+        ],
+        spacing="2",
+        align="center",
+        height="16px",
+    )
+
+
+def voice_wave() -> rx.Component:
+    """The gradient swoosh that stands in for the agent's voice.
+
+    Nothing clips it: the gradients fade out well inside the box so the blur
+    has room to bleed, which is what keeps the edges soft instead of square.
+    """
+    return rx.box(
+        width="min(400px, 100%)",
+        height="clamp(64px, 10vh, 110px)",
+        pointer_events="none",
+        background_image=(
+            "radial-gradient(24% 30% at 16% 62%, rgba(244,67,75,0.90) 0%, rgba(244,67,75,0) 100%),"
+            "radial-gradient(22% 26% at 38% 42%, rgba(170,120,255,0.70) 0%, rgba(170,120,255,0) 100%),"
+            "radial-gradient(24% 28% at 60% 58%, rgba(96,160,255,0.62) 0%, rgba(96,160,255,0) 100%),"
+            "radial-gradient(20% 24% at 80% 40%, rgba(255,186,132,0.50) 0%, rgba(255,186,132,0) 100%)"
+        ),
+        filter="blur(16px) saturate(1.15)",
+        style={
+            "maskImage": "linear-gradient(90deg, transparent 0%, #000 18%, #000 78%, transparent 100%)",
+            "WebkitMaskImage": "linear-gradient(90deg, transparent 0%, #000 18%, #000 78%, transparent 100%)",
+        },
+        animation=rx.cond(
+            AgentState.is_recording,
+            "breathe 1.8s ease-in-out infinite",
+            "breathe 7s ease-in-out infinite",
+        ),
+        opacity=rx.cond(AgentState.is_recording | AgentState.is_loading, "1", "0.7"),
+        transition="opacity .5s ease",
+    )
+
+
+def mic_button() -> rx.Component:
     return rx.box(
         rx.center(
-            rx.text(name, weight="bold", color="white"),
-            width="120px",
-            height="90px",
-            bg=color,
-            border_radius="8px",
-            transition="all 0.3s cubic-bezier(0.25, 0.8, 0.25, 1)",
-            border="2px solid transparent",
-            _hover={
-                "transform": "scale(1.1) translateY(-5px)", 
-                "border": "2px solid white", 
-                "z_index": "10",
-                "box_shadow": f"0 10px 20px {color}80"
-            },
-            cursor="pointer",
+            rx.cond(
+                AgentState.is_recording,
+                rx.icon("square", size=18, color="white"),
+                rx.icon("mic", size=20, color="white"),
+            ),
+            width="100%",
+            height="100%",
         ),
-        margin_right="10px",
-        animation=f"fadeInRight 0.5s ease-out {0.1 * index}s both",
+        width="68px",
+        height="68px",
+        border_radius="50%",
+        border=f"6px solid {SURFACE}",
+        bg=PINK,
+        cursor="pointer",
+        flex_shrink="0",
+        position="absolute",
+        right="1.4rem",
+        bottom="1.4rem",
+        z_index="10",
+        box_shadow=rx.cond(
+            AgentState.is_recording,
+            f"0 0 0 10px {PINK_SOFT}, {SHADOW_SM}",
+            SHADOW_SM,
+        ),
+        on_click=rx.call_script(TOGGLE_RECORDING_JS, callback=AgentState.handle_voice),
+        _hover={"transform": "scale(1.06)"},
+        transition="all .2s ease",
     )
+
+
+def agent_panel() -> rx.Component:
+    return rx.vstack(
+        rx.vstack(
+            rx.foreach(AgentState.history, ghost_line),
+            spacing="2",
+            align="start",
+            width="100%",
+        ),
+        rx.vstack(
+            rx.cond(
+                AgentState.has_messages,
+                rx.cond(
+                    AgentState.show_user_message,
+                    rx.text(
+                        AgentState.latest_message,
+                        font_size="clamp(1.8rem, 2.8vw, 3rem)",
+                        font_weight="600",
+                        letter_spacing="-0.025em",
+                        line_height="1.18",
+                        color=INK,
+                        max_width="100%",
+                        animation="rise .5s ease-out",
+                        white_space=rx.cond(AgentState.is_user_turn, "nowrap", "normal"),
+                        overflow=rx.cond(AgentState.is_user_turn, "hidden", "visible"),
+                        text_overflow=rx.cond(AgentState.is_user_turn, "ellipsis", "clip"),
+                    ),
+                    rx.box(height="0px"),
+                ),
+                rx.vstack(
+                    rx.text("Hey ", AgentState.current_name, ",", font_size="1.6rem", font_weight="500", color=MUTED),
+                    rx.text("What do you feel like watching?", font_size="clamp(2rem, 3vw, 3.5rem)", font_weight="600", letter_spacing="-0.03em", line_height="1.1", color=INK, white_space="nowrap"),
+                    spacing="2",
+                    align="start",
+                    animation="rise .5s ease-out",
+                )
+            ),
+            rx.cond(AgentState.is_loading, thinking_dots(), rx.box(height="16px")),
+            spacing="2",
+            align="start",
+        ),
+        spacing="4",
+        align="start",
+        justify="center",
+        width="100%",
+        flex="1",
+        min_width="320px",
+    )
+
+
+# --- Selection (the film in the spotlight) ---
+def poster_art(src, initial, **props) -> rx.Component:
+    """A poster, or a quiet placeholder when the catalogue has no art."""
+    return rx.box(
+        rx.cond(
+            src != "",
+            rx.image(src=src, width="100%", height="100%", object_fit="cover", loading="lazy", alt=""),
+            rx.center(
+                rx.text(initial, font_size="2rem", font_weight="300", color=FAINT),
+                width="100%",
+                height="100%",
+                bg=TINT,
+            ),
+        ),
+        overflow="hidden",
+        bg=TINT,
+        **props,
+    )
+
+
+def selection_panel() -> rx.Component:
+    """The detail view: the art, the title, and one thing to press."""
+    return card(
+        rx.vstack(
+            rx.hstack(
+                rx.cond(AgentState.is_done, caption("Chosen"), rx.box()),
+                rx.cond(AgentState.is_done, pill("Now playing", accent=True), rx.box()),
+                justify="between",
+                align="center",
+                width="100%",
+            ),
+            rx.box(
+                poster_art(
+                    AgentState.selected_poster,
+                    AgentState.selected_initial,
+                    width="100%",
+                    height="100%",
+                    border_radius="22px",
+                ),
+                rx.center(
+                    rx.center(
+                        rx.icon("play", size=22, color=PINK, fill=PINK),
+                        width="64px",
+                        height="64px",
+                        border_radius="50%",
+                        bg="rgba(255,255,255,0.94)",
+                        backdrop_filter="blur(6px)",
+                        box_shadow=SHADOW_LIFT,
+                        transition="transform .2s ease",
+                        _hover={"transform": "scale(1.08)"},
+                    ),
+                    position="absolute",
+                    inset="0",
+                    cursor="pointer",
+                    on_click=AgentState.confirm_selection,
+                ),
+                position="relative",
+                width="100%",
+                flex="1",
+                min_height="350px",
+            ),
+            rx.vstack(
+                rx.heading(
+                    AgentState.selected,
+                    size="7",
+                    weight="bold",
+                    letter_spacing="-0.03em",
+                    line_height="1.12",
+                ),
+                rx.hstack(pill("Recommendation"), spacing="2", wrap="wrap"),
+                spacing="3",
+                align="start",
+                width="100%",
+            ),
+            rx.button(
+                rx.hstack(
+                    rx.icon("play", size=16, fill="white"),
+                    rx.text("Watch this", font_weight="600"),
+                    spacing="2",
+                    align="center",
+                ),
+                on_click=AgentState.confirm_selection,
+                disabled=AgentState.is_loading,
+                bg=PINK,
+                color="white",
+                width="100%",
+                height="48px",
+                border_radius="999px",
+                cursor="pointer",
+                _hover={"bg": PINK_DEEP, "transform": "translateY(-1px)"},
+                transition="all .2s ease",
+                box_shadow=SHADOW_SM,
+            ),
+            spacing="4",
+            align="start",
+            width="100%",
+            height="100%",
+        ),
+        padding="1.4rem",
+        width="330px",
+        flex_shrink="0",
+        height="100%",
+        overflow="hidden",
+        animation="glide .5s ease-out",
+    )
+
+
+# --- Rail (everything on the table) ---
+def movie_card(movie: dict[str, str]) -> rx.Component:
+    chosen = AgentState.selected == movie["title"]
+    return rx.vstack(
+        poster_art(
+            movie["poster"],
+            movie["initial"],
+            width="100%",
+            height="clamp(160px, 22vh, 230px)",
+            border_radius="16px",
+            filter=rx.cond(chosen, "none", "grayscale(1) contrast(0.95)"),
+            transition="filter .4s ease",
+        ),
+        rx.hstack(
+            pill(movie["number"], accent=chosen),
+            rx.text(
+                movie["title"],
+                font_size="0.9rem",
+                font_weight="500",
+                color=INK,
+                overflow="hidden",
+                text_overflow="ellipsis",
+                white_space="nowrap",
+            ),
+            spacing="2",
+            align="center",
+            width="100%",
+        ),
+        spacing="3",
+        align="start",
+        width="clamp(110px, 10vw, 150px)",
+        flex_shrink="0",
+        padding="0.55rem",
+        border_radius="24px",
+        bg=rx.cond(chosen, TINT, "transparent"),
+        box_shadow=rx.cond(chosen, f"inset 0 0 0 1.5px {PINK}", "none"),
+        transform=rx.cond(chosen, "translateY(-6px)", "none"),
+        cursor="pointer",
+        on_click=AgentState.select_movie(movie["title"]),
+        on_mouse_enter=AgentState.hover_movie(movie["title"]),
+        _hover={"transform": "translateY(-6px)"},
+        transition="all .3s cubic-bezier(0.25, 0.8, 0.25, 1)",
+    )
+
+
+def movie_rail() -> rx.Component:
+    return card(
+        rx.vstack(
+            rx.hstack(
+                rx.vstack(
+                    caption("Recommendations"),
+                    rx.text("Pick one to see it up close", font_size="0.85rem", color=MUTED),
+                    spacing="1",
+                    align="start",
+                ),
+                pill(AgentState.movie_count),
+                justify="between",
+                align="center",
+                width="100%",
+            ),
+            rx.box(
+                rx.hstack(
+                    rx.foreach(AgentState.movies, movie_card),
+                    spacing="3",
+                    align="start",
+                    padding_top="8px",
+                ),
+                class_name="rail",
+                width="100%",
+                overflow_x="auto",
+                padding_bottom="0.25rem",
+            ),
+            spacing="3",
+            align="start",
+            width="100%",
+        ),
+        mic_button(),
+        padding="1.3rem 1.4rem",
+        width="100%",
+        flex_shrink="0",
+        animation="rise .6s ease-out",
+        position="relative",
+    )
+
+
+def empty_rail() -> rx.Component:
+    """Stands in for the rail before the agent has proposed anything."""
+    return card(
+        rx.hstack(
+            rx.center(
+                rx.icon("clapperboard", size=28, color=FAINT),
+                width="64px",
+                height="64px",
+                border_radius="16px",
+                bg=TINT,
+                flex_shrink="0",
+            ),
+            rx.vstack(
+                rx.text("No recommendations yet", font_size="1.3rem", font_weight="600"),
+                rx.text(
+                    "Tell the agent what you're in the mood for and they'll appear here.",
+                    font_size="1rem",
+                    color=MUTED,
+                ),
+                spacing="1",
+                align="start",
+            ),
+            spacing="5",
+            align="center",
+        ),
+        mic_button(),
+        display="flex",
+        align_items="center",
+        justify_content="flex-start",
+        padding="1.5rem 2rem",
+        width="100%",
+        min_height="180px",
+        position="relative",
+    )
+
+
+# --- Pages ---
+def agent_tv_panel() -> rx.Component:
+    return rx.box(
+        rx.button(
+            id="hidden_key_btn",
+            on_click=AgentState.handle_key(rx.Var.create("document.getElementById('hidden_key_val').value")),
+            style={"display": "none"},
+        ),
+        rx.input(id="hidden_key_val", style={"display": "none"}),
+        rx.script("""
+            document.addEventListener('keydown', function(e) {
+                if (['ArrowRight', 'ArrowLeft', 'Enter'].includes(e.key)) {
+                    var el = document.getElementById('hidden_key_val');
+                    if (el) {
+                        el.value = e.key;
+                        document.getElementById('hidden_key_btn').click();
+                    }
+                }
+            });
+        """),
+        rx.box(
+            rx.html(GLOBAL_CSS),
+            ambient(),
+            rx.vstack(
+                status_bar(back=True),
+                rx.hstack(
+                    agent_panel(),
+                    spacing="6",
+                    align="stretch",
+                    width="100%",
+                    flex="1",
+                    min_height="0",
+                    wrap="wrap",
+                ),
+                rx.hstack(
+                    rx.box(
+                        rx.cond(AgentState.has_movies, movie_rail(), empty_rail()),
+                        flex="1",
+                        min_width="0",
+                    ),
+                    spacing="6",
+                    align="end",
+                    width="100%",
+                    flex_shrink="0",
+                ),
+                spacing="5",
+                width="100%",
+                max_width="1320px",
+                height="100vh",
+                margin="0 auto",
+                padding="1.8rem clamp(1.2rem, 4vw, 3rem) 2rem",
+                position="relative",
+                z_index="1",
+                opacity=rx.cond(AgentState.is_booting, "0", "1"),
+                transition="opacity 1s ease-in-out",
+            ),
+            bg=CANVAS,
+            height="100vh",
+            width="100%",
+            overflow="hidden",
+            position="relative",
+            animation="fade-in .7s ease-out both",
+        )
+    )
+
+
+def app_tile(app: dict[str, str], index: int) -> rx.Component:
+    return rx.center(
+        rx.image(
+            src=app["icon"],
+            width="100%",
+            height="100%",
+            border_radius="20px",
+            object_fit="cover",
+        ),
+        width="86px",
+        height="86px",
+        flex_shrink="0",
+        padding="0",
+        bg=SURFACE,
+        border=f"1.5px solid {HAIRLINE}",
+        border_radius="22px",
+        box_shadow=SHADOW_SM,
+        cursor="pointer",
+        overflow="hidden",
+        _hover={"transform": "translateY(-6px)", "box_shadow": SHADOW},
+        transition="all .3s cubic-bezier(0.25, 0.8, 0.25, 1)",
+        animation=f"glide .5s ease-out {0.06 * index}s both",
+    )
+
 
 def favourite_apps_row() -> rx.Component:
     apps = [
-        {"name": "TV", "color": "#0055A4"},
-        {"name": "NETFLIX", "color": "#E50914"},
-        {"name": "prime video", "color": "#00A8E1"},
-        {"name": "Disney+", "color": "#113CCF"},
-        {"name": "HBO", "color": "#663399"},
-        {"name": "Apple TV", "color": "#333333"},
-        {"name": "YouTube", "color": "#FF0000"},
-        {"name": "Twitch", "color": "#9146FF"},
+        {"name": "Netflix", "color": "#E50914", "icon": "https://about.netflix.com/images/meta/netflix-symbol-black.png"},
+        {"name": "Prime Video", "color": "#00A8E1", "icon": "https://www.google.com/s2/favicons?domain=primevideo.com&sz=128"},
+        {"name": "Disney+", "color": "#113CCF", "icon": "https://www.google.com/s2/favicons?domain=disneyplus.com&sz=128"},
+        {"name": "HBO", "color": "#663399", "icon": "https://www.google.com/s2/favicons?domain=max.com&sz=128"},
+        {"name": "Apple TV", "color": "#2B2B2E", "icon": "https://www.google.com/s2/favicons?domain=tv.apple.com&sz=128"},
+        {"name": "YouTube", "color": "#FF0000", "icon": "https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcQlx4g7JLK01O3GnMA87AdWdM0zxs9csdWorrUX8S17cQ&s=10"},
+        {"name": "Twitch", "color": "#9146FF", "icon": "https://cdn-icons-png.flaticon.com/512/2504/2504946.png"},
+        {"name": "Spotify", "color": "#1DB954", "icon": "https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcQBD_K9JdZ2ghWpJVl-TeDlG8IJqSXZ_Svur3KJdoH_xg&s"},
+        {"name": "Browser", "color": "#4285F4", "icon": "https://www.google.com/s2/favicons?domain=google.com&sz=128"},
+        {"name": "Crunchyroll", "color": "#F47521", "icon": "https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcRRkGTfZH3-w93cXUKy9Ngv9f9a_J2BZuZqnyVmFnpsRg&s=10"},
+        {"name": "3Cat", "color": "#000000", "icon": "https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcSrAllgUZtIE01JQl9jjNSZbZhvuewA65gigXB1M_ncGQ&s=10"},
+        {"name": "Music", "color": "#FA243C", "icon": "https://www.google.com/s2/favicons?domain=music.apple.com&sz=128"},
     ]
     return rx.vstack(
-        rx.text("Favourite Apps", size="3", color=text_muted, margin_bottom="0.5em", padding_x="4%", animation="fadeInUp 1.6s ease-out both"),
+        caption("Your apps"),
+        rx.divider(border_color=HAIRLINE, width="100%", margin_bottom="0.5rem"),
         rx.box(
-            rx.hstack(
-                *[app_tile(app["name"], app["color"], i) for i, app in enumerate(apps)],
-                spacing="2",
-                padding_x="4%",
-                padding_bottom="1em",
-            ),
+            rx.hstack(*[app_tile(app, i) for i, app in enumerate(apps)], spacing="3"),
+            class_name="rail",
             width="100%",
-            overflow_x="scroll",
-            style={"&::-webkit-scrollbar": {"display": "none"}, "msOverflowStyle": "none", "scrollbarWidth": "none"},
+            overflow_x="auto",
+            padding_y="0.5rem",
         ),
+        spacing="3",
+        align="start",
         width="100%",
-        align_items="flex-start",
     )
 
+
+def hero() -> rx.Component:
+    return rx.vstack(
+        rx.heading(
+            "Tell me what you're in the mood for.",
+            size="9",
+            weight="bold",
+            letter_spacing="-0.035em",
+            line_height="1.05",
+        ),
+        rx.text(
+            "Your mood in, the perfect movie out.",
+            max_width="100%",
+            font_size="1.05rem",
+            color=MUTED,
+            line_height="1.6",
+        ),
+        rx.button(
+            rx.hstack(
+                rx.icon("arrow-right", size=17),
+                rx.text("Launch agent", font_weight="600"),
+                spacing="2",
+                align="center",
+            ),
+            on_click=AgentState.open_tv_agent,
+            bg=PINK,
+            color="white",
+            height="52px",
+            padding_x="1.8em",
+            border_radius="999px",
+            cursor="pointer",
+            box_shadow=f"0 14px 30px {PINK}3d",
+            _hover={"bg": PINK_DEEP, "transform": "translateY(-2px)"},
+            transition="all .2s ease",
+            margin_top="0.5rem",
+        ),
+        spacing="4",
+        align="start",
+        width="100%",
+        animation="rise .7s ease-out",
+    )
+
+
 def index() -> rx.Component:
-    # Inject CSS keyframes for animations
-    keyframes = """
-    <style>
-        @keyframes fadeInUp {
-            from { opacity: 0; transform: translateY(20px); }
-            to { opacity: 1; transform: translateY(0); }
-        }
-        @keyframes fadeInDown {
-            from { opacity: 0; transform: translateY(-20px); }
-            to { opacity: 1; transform: translateY(0); }
-        }
-        @keyframes fadeInRight {
-            from { opacity: 0; transform: translateX(20px); }
-            to { opacity: 1; transform: translateX(0); }
-        }
-        @keyframes slideInRight {
-            from { opacity: 0; transform: translateX(100%); }
-            to { opacity: 1; transform: translateX(0); }
-        }
-        @keyframes pulse {
-            0% { transform: scale(1); }
-            50% { transform: scale(1.1); }
-            100% { transform: scale(1); }
-        }
-    </style>
-    """
-    
     return rx.box(
-        rx.html(keyframes),
+        rx.html(GLOBAL_CSS),
+        # The poster wall, washed almost white so the cards stay readable.
         rx.box(
-            position="absolute",
-            top="0",
-            left="0",
-            width="100%",
-            height="100%",
+            position="fixed",
+            inset="0",
             background_image="url('/movie_posters_bg.jpg')",
             background_size="cover",
-            background_position="center center",
-            z_index="0"
+            background_position="center",
+            filter="grayscale(1)",
+            opacity="0.12",
+            z_index="0",
         ),
         rx.box(
-            position="absolute",
-            top="0",
-            left="0",
-            width="100%",
-            height="100%",
-            background_image="linear-gradient(to right, rgba(17,17,17,1) 0%, rgba(17,17,17,0.85) 40%, rgba(17,17,17,0.2) 100%)",
-            z_index="1"
+            position="fixed",
+            inset="0",
+            background_image=f"linear-gradient(105deg, {CANVAS} 0%, {CANVAS}f2 45%, {CANVAS}c9 100%)",
+            z_index="0",
         ),
-        navbar(),
+        ambient(),
         rx.vstack(
+            status_bar(),
+            rx.box(flex="1"),
             hero(),
+            rx.box(height="1.5rem"),
             favourite_apps_row(),
-            justify="between",
+            rx.box(flex="0.4"),
+            spacing="5",
+            align="start",
             width="100%",
-            height="100vh",
-            padding_top="14vh",
-            padding_bottom="4vh",
-            z_index="2",
-            position="relative"
+            max_width="1320px",
+            min_height="100vh",
+            margin="0 auto",
+            padding="2.2rem clamp(1.2rem, 4vw, 3rem) 2.5rem",
+            position="relative",
+            z_index="1",
         ),
-        chat_modal(),
-        **{**style, "background_color": "transparent"},
-        height="100vh",
-        overflow="hidden",
-        position="relative"
+        bg=CANVAS,
+        min_height="100vh",
+        width="100%",
+        position="relative",
+        animation="tv-on .8s cubic-bezier(0.22, 1, 0.36, 1) both",
     )
+
 
 app = rx.App(
     style=style,
     api_transformer=voice_api,
+    stylesheets=[
+        "https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap"
+    ],
 )
 app.add_page(index, title="KinoFiles OS")
+app.add_page(agent_tv_panel, route="/agent", title="KinoFiles Agent TV", on_load=AgentState.reset_agent)

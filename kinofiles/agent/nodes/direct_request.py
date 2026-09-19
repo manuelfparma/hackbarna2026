@@ -79,7 +79,7 @@ class DirectRequestHandler:
                         query = query.ilike(
                             f"{filter_column}_text", f"%{clean_title(item)}%"
                         )
-            res = query.order("rating", desc=True).limit(5).execute()
+            res = query.order("rating", desc=True).limit(8).execute()
             movies = res.data
 
             if not movies:

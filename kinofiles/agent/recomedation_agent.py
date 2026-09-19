@@ -285,8 +285,6 @@ class RecommendationAgent:
         movies = state.get("movies") or []
         text = state.get("response") or ""
         show_options = state.get("show_options", False) and bool(movies)
-        if show_options:
-            text = f"{text}\n\nPick a number (1-{len(movies)}) or tell me what to change."
 
         answer = interrupt(prompt(text, movies if show_options else [])).strip()
 
