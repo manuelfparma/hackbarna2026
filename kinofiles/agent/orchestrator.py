@@ -273,5 +273,10 @@ class OrquestratorAgent:
         return event.get("choice", "")
 
 if __name__ == "__main__":
+    import logging
+
     load_dotenv()
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s | %(message)s")
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+    logging.getLogger("httpx2").setLevel(logging.WARNING)
     OrquestratorAgent().run()

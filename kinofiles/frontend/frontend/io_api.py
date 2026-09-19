@@ -10,6 +10,7 @@ work to a thread rather than stalling the event loop the websockets share.
 """
 
 import asyncio
+import logging
 import sys
 from pathlib import Path
 
@@ -27,6 +28,10 @@ from fastapi import FastAPI, UploadFile
 from agent.io.stt import STT
 
 from .api import router as agent_router
+
+logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s | %(message)s")
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("httpx2").setLevel(logging.WARNING)
 
 stt = STT()
 

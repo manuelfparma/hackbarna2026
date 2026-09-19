@@ -7,7 +7,7 @@ from agent.nodes.catalog import resolve_movie
 from agent.nodes.criteria import build_theme_query, normalize_criteria
 
 MATCH_COUNT = 10
-MOVIE_LIMIT = 5
+MOVIE_LIMIT = 8
 SIMILARITY_MARGIN = 0.10
 # Similar-to candidates are post-filtered by genre, so ask for extra rows
 # to have something left after the filter bites.
