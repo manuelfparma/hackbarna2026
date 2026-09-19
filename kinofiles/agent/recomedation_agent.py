@@ -152,6 +152,12 @@ class RecommendationAgent:
             return "social"
         if RecommendationAgent._is_factual_movie_request(intent, entities):
             return "direct_request"
+        movies = entities.get("movies") or []
+        if any(movie.get("role") in {"seed", "liked"} for movie in movies):
+            # A seed film always takes the similar_to path, even when the
+            # classifier packed catalog filters alongside it — _similar_to
+            # post-filters genres on real neighbors.
+            return "theme_recommendation"
         if entities.get("themes") or (
             intent in {"theme_recommendation", "recommendation", "feedback"}
             and criteria.get("themes")
@@ -164,6 +170,14 @@ class RecommendationAgent:
         ):
             return "direct_request"
         if intent == "recommendation":
+            return "theme_recommendation"
+        if (
+            intent == "direct_request"
+            and not has_catalog_filters(criteria)
+            and criteria.get("themes")
+        ):
+            # The catalog filters didn't survive normalization (e.g. "heist"
+            # demoted to a theme) — this is a semantic ask, not a lookup.
             return "theme_recommendation"
         return intent
 

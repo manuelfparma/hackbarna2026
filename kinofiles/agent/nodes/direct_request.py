@@ -40,7 +40,11 @@ class DirectRequestHandler:
         if column == "name" and value:
             title = clean_title(value)
         elif column and value and column in CATALOG_ARRAY_FIELDS and column not in filters:
-            filters[column] = [value]
+            # Normalize the lone value too — a non-catalog "genre" demotes
+            # instead of becoming a containment filter that matches nothing.
+            extra = normalize_criteria({column: [value]})
+            if extra[column]:
+                filters[column] = extra[column]
         result = {
             "kind": "direct_request",
             "titles": [],

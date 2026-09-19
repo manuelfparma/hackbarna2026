@@ -3,7 +3,9 @@ import unittest
 from agent.nodes.criteria import (
     build_theme_query,
     merge_criteria,
+    normalize_criteria,
     normalize_genres,
+    split_genres,
 )
 
 
@@ -51,6 +53,18 @@ class CriteriaTests(unittest.TestCase):
             normalize_genres(["sci-fi", "action movies", "COMEDY"]),
             ["Science Fiction", "Action", "Comedy"],
         )
+
+    def test_non_catalog_genres_demote_to_themes(self):
+        canonical, demoted = split_genres(["Heist", "comedy", "space"])
+
+        self.assertEqual(canonical, ["Comedy"])
+        self.assertEqual(demoted, ["Heist", "space"])
+
+    def test_normalize_criteria_moves_bogus_genres_into_themes(self):
+        normalized = normalize_criteria({"genres": ["Heist", "Crime"]})
+
+        self.assertEqual(normalized["genres"], ["Crime"])
+        self.assertEqual(normalized["themes"], ["Heist"])
 
     def test_theme_query_combines_latest_request_with_remembered_moods(self):
         query = build_theme_query(

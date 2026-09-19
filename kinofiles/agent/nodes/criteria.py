@@ -66,15 +66,31 @@ def empty_criteria() -> dict:
     return {field: [] for field in CRITERIA_FIELDS}
 
 
-def normalize_genres(genres: list[str]) -> list[str]:
-    """Map common genre spellings to the catalog's exact labels."""
-    normalized = []
+def split_genres(genres: list[str]) -> tuple[list[str], list[str]]:
+    """Split genre words into (canonical catalog labels, everything else).
+
+    Anything that doesn't map to a catalog label is not a genre the filter
+    layer can use — "heist" as a genres containment filter matches nothing
+    and errors the lookup. Those words carry real meaning though, so callers
+    demote them to themes where they become a semantic query.
+    """
+    canonical, demoted = [], []
+    seen = set()
     for genre in genres:
         clean = genre.strip()
-        canonical = _GENRE_ALIASES.get(clean.casefold(), clean)
-        if canonical.casefold() not in {item.casefold() for item in normalized}:
-            normalized.append(canonical)
-    return normalized
+        label = _GENRE_ALIASES.get(clean.casefold())
+        if label:
+            if label.casefold() not in seen:
+                seen.add(label.casefold())
+                canonical.append(label)
+        elif clean:
+            demoted.append(clean)
+    return canonical, demoted
+
+
+def normalize_genres(genres: list[str]) -> list[str]:
+    """Map common genre spellings to the catalog's exact labels."""
+    return split_genres(genres)[0]
 
 
 def _dedupe(values: list) -> list:
@@ -95,11 +111,18 @@ def _dedupe(values: list) -> list:
 
 
 def normalize_criteria(criteria: dict | None) -> dict:
-    """Fill missing fields and normalize values copied from structured output."""
+    """Fill missing fields and normalize values copied from structured output.
+
+    Genre words that aren't catalog labels demote to `themes`, so a bogus
+    "genre" (heist, space) becomes a semantic signal instead of an empty
+    containment filter.
+    """
     normalized = empty_criteria()
     for field in CRITERIA_FIELDS:
         normalized[field] = _dedupe(deepcopy((criteria or {}).get(field) or []))
-    normalized["genres"] = normalize_genres(normalized["genres"])
+    canonical, demoted = split_genres(normalized["genres"])
+    normalized["genres"] = canonical
+    normalized["themes"] = _dedupe(normalized["themes"] + demoted)
     return normalized
 
 
