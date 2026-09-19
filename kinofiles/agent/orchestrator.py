@@ -12,6 +12,8 @@ from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.graph import END, StateGraph
 from langgraph.types import Command, interrupt
 
+from pydantic import BaseModel, Field
+
 from agent.io.turn import prompt
 from agent.llm import build_llm, build_mistral_llm
 from agent.nodes.classifier import Classifier
@@ -19,6 +21,12 @@ from agent.nodes.criteria import has_catalog_filters, merge_criteria, merge_grou
 from agent.nodes.direct_request import DirectRequestHandler
 from agent.nodes.theme_recommender import ThemeRecommender
 from agent.nodes.reply import ReplyComposer, MAX_HISTORY_TURNS
+
+class ParticipantsExtract(BaseModel):
+    """Extract participant names."""
+    names: list[str] = Field(
+        description="The extracted names of the people participating, properly capitalized."
+    )
 
 class State(TypedDict):
     # Group
@@ -74,14 +82,24 @@ class OrquestratorAgent:
 
     def welcome(self, state: State) -> Command:
         msg = "Welcome to KinoFiles! Who's picking tonight?\nTell me everyone's names (1–4 people)."
+        extractor = self.reply_llm.with_structured_output(ParticipantsExtract)
+        
         while True:
             text = interrupt(prompt(msg))
-            raw_names = re.split(r',|\band\b', text)
-            names = [n.strip() for n in raw_names if n.strip()]
+            try:
+                result = extractor.invoke(
+                    f"Extract the participant names from this input: '{text}'."
+                )
+                names = result.names
+                confirmation = f"I detected {len(names)} people: {', '.join(names)}."
+            except Exception:
+                raw_names = re.split(r',|\band\b', text)
+                names = [n.strip().title() for n in raw_names if n.strip()]
+                confirmation = f"I detected {len(names)} people: {', '.join(names)}."
             
             if 1 <= len(names) <= 4:
                 break
-            msg = "Please give between 1 and 4 names, separated by commas."
+            msg = "Please give between 1 and 4 names. Let's try again:"
             
         return Command(
             goto="collect_preferences",
@@ -92,6 +110,7 @@ class OrquestratorAgent:
                 "per_person_criteria": {n: empty_criteria() for n in names},
                 "history": [],
                 "round": 1,
+                "response": confirmation,
             }
         )
 
@@ -103,7 +122,8 @@ class OrquestratorAgent:
             return Command(goto="mediate")
             
         person = names[idx]
-        msg = f"{person}, what are you in the mood for?"
+        prefix = state.get("response", "") if idx == 0 else ""
+        msg = f"{prefix}\n\n{person}, what are you in the mood for?".strip()
         text = interrupt(prompt(msg, participant=person))
         
         # Classify
@@ -122,7 +142,8 @@ class OrquestratorAgent:
             update={
                 "current_participant": idx + 1,
                 "preferences": {**state["preferences"], person: prefs},
-                "per_person_criteria": {**state["per_person_criteria"], person: new_criteria}
+                "per_person_criteria": {**state["per_person_criteria"], person: new_criteria},
+                "response": ""
             }
         )
 
