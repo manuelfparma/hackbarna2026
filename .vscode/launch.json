@@ -2,10 +2,10 @@
   "version": "0.2.0",
   "configurations": [
     {
-      "name": "Python: router_orchestrator",
+      "name": "Python: recomedation_agent",
       "type": "debugpy",
       "request": "launch",
-      "module": "agent.router_orchestrator",
+      "module": "agent.recomedation_agent",
       "python": "${workspaceFolder}/kinofiles/.venv/bin/python",
       "cwd": "${workspaceFolder}/kinofiles",
       "console": "integratedTerminal",

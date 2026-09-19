@@ -17,15 +17,30 @@ welcome --> conversation --> goodbye --> END
 ## Graph: RecommendationAgent (subagent)
 
 ```
-classify --> {theme_recommendation | recommendation | feedback   --> turn --+
-              | direct_request | social}                    ^              |
-                                                              +--------------+
-                                                     (no pick yet, loops back to classify)
+classify --> {theme_recommendation | feedback | direct_request
+              | social} --> reply --> turn ------------------+
+                   ^                                           |
+                   +-------------------------------------------+
+                              (no pick yet)
 ```
 
-- **classify** — routes the message via the `Classifier` LLM call to one of the five branches below, extracting `column`/`value` for direct requests.
-- **theme_recommendation** / **recommendation** / **feedback** / **direct_request** / **social** — one subagent per intent (`nodes/`), each producing a `response` and, where relevant, a `movies` shortlist.
-- **turn** — `interrupt()` showing the reply and, if there's a shortlist, asking the user to pick a number or say what to change. A valid number ends the graph with `choice` set; anything else feeds back into `classify` as the next message, so a mid-conversation detour (small talk, a follow-up filter) doesn't need to be anticipated as "feedback" — the classifier sorts it out on the next pass.
+- **classify** — extracts this turn's entities and a criteria action (`add`, `replace`, `reset`, or `keep`), merges them into `search_criteria`, then resolves the capability. A feedback turn that adds a genre or theme is routed back through retrieval with the full accumulated brief.
+- **theme_recommendation** / **feedback** / **direct_request** / **social** — one capability per route (`nodes/`). Generic “recommend a movie” intents share theme search with explicit mood asks. Each produces structured result data; none owns user-facing prose.
+- **reply** — the single conversational voice. It receives the raw result, entities, feedback, current shortlist, and the latest six turns of history, then writes a brief `response`. A deterministic fallback keeps the graph usable if this LLM call fails.
+- **turn** — `interrupt()` showing the reply and, when `show_options` is true, asking the user to pick a number or say what to change. A valid number ends the graph with `choice` set; anything else feeds back into `classify`.
+
+`movies` and `show_options` are deliberately separate. Small-talk and failed lookup detours retain the selectable shortlist in state without redisplaying an unrelated list or call-to-action.
+
+### Persistent search criteria
+
+`entities` describes only the latest utterance. `search_criteria` is the normalized, session-long search brief. Language cues control how the latest entities change it:
+
+- “also”, “and”, “with” → add
+- “instead”, “rather”, or an unqualified new direction → replace
+- “start over”, “forget that”, “something completely different” → reset
+- greetings, thanks, and factual questions → keep
+
+Explicit genres are canonicalized to catalog labels and applied as a strict AND filter. `Comedy` followed by “also Action” therefore queries movies containing both genres. Free-text moods and themes remain semantic signals; when both are present, theme ranking runs only over movies that satisfy the genre filter. Empty intersections are reported instead of silently dropping a constraint.
 
 ## How the interrupt loop works
 
@@ -42,7 +57,7 @@ This requires a checkpointer (`InMemorySaver`) to save/restore state between pau
 
 One consequence worth knowing: **while the subagent is paused, the supervisor's own state doesn't yet contain anything the subagent has written** — a subgraph's writes only land once its node returns, and mid-node it hasn't returned. The interrupt payload (built via `io/turn.py`'s `prompt(text, options)`) is therefore the only channel out during the pause; `OrquestratorAgent.pending_state()` reaches past that when needed (logging, a fallback if the shortlist came back empty) by reading the subagent's in-flight state with `get_state(subgraphs=True)`.
 
-The supervisor's `State` is deliberately a **superset** of the subagent's (`response`, `intent`, `column`, `value`, plus its own `farewell`): LangGraph only propagates state keys the parent schema declares, so a narrower parent schema would silently drop everything the subagent produces once it *does* return.
+The supervisor's `State` is deliberately a **superset** of the subagent's (`search_criteria`, `result`, `history`, `show_options`, `response`, routing fields, plus its own `farewell`): LangGraph only propagates state keys the parent schema declares, so a narrower parent schema would silently drop everything the subagent produces once it *does* return.
 
 ```python
 # orchestrator.py
@@ -69,13 +84,13 @@ And it costs nothing to keep both layers: the subagent's interrupts reach the su
 
 ## Nodes / subagents
 
-Each intent branch in `RecommendationAgent` is its own class under `nodes/`, injected with the shared LLM (`agent/llm.py`, Nebius):
+Each intent branch in `RecommendationAgent` is its own class under `nodes/`:
 
-- `nodes/classifier.py` — `Classifier`, routes each message to an intent and extracts `column`/`value` for direct requests.
-- `nodes/recommender.py` — `Recommender`, a single LLM call for generic recommendations (mock: swap the body of `recommend(request, feedback)` for the team's search engine later; the signature stays the same).
-- `nodes/theme_recommender.py` — `ThemeRecommender`, nearest-theme search via pgvector/Supabase for mood/topic-based requests.
-- `nodes/direct_request.py` — `DirectRequestHandler`, queries Supabase by a specific attribute (director, actor, genre, ...).
-- `nodes/feedback.py` — `FeedbackHandler`, acknowledges feedback on a previous shortlist.
-- `nodes/social.py` — `SocialHandler`, greetings and small talk.
+- `nodes/classifier.py` — `Classifier`, routes each message, extracts entities, and selects the criteria merge action.
+- `nodes/criteria.py` — pure normalization, merge, summary, and semantic-query helpers for the persisted search brief.
+- `nodes/theme_recommender.py` — `ThemeRecommender`, nearest-theme search via pgvector/Supabase, pre-filtered by all accumulated genres. Generic recommendation and unconstrained feedback use this path too. Similarity scores remain internal.
+- `nodes/direct_request.py` — `DirectRequestHandler`, chains accumulated catalog filters; multiple genres use PostgreSQL array containment as a strict AND.
+- `nodes/feedback.py` / `nodes/social.py` — package context for the reply layer without making their own prose-generation calls.
+- `nodes/reply.py` — `ReplyComposer`, the shared conversational voice. Production gives this client temperature `0.4`; routing remains at temperature `0`.
 
 `io/turn.py` holds `prompt(text, options)`, the shape every `interrupt()` payload takes — shared by both graphs so `text` (narrated) and `options` (rendered) stay a stable contract for whatever's driving the conversation (terminal loop, web API, TTS/STT).

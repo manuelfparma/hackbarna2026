@@ -1,15 +1,14 @@
 """Shared chat-LLM factories.
 
-Query classification uses Mistral (`ChatMistralAI`). The other chat nodes
-(recommendations, feedback, social, direct request) use Nebius AI Studio,
-which speaks the OpenAI API.
+Query classification uses Mistral (`ChatMistralAI`). Conversational replies
+use Nebius AI Studio, which speaks the OpenAI API.
 
 Theme search still embeds with `mistral-embed` because the vectors already
 stored in Supabase live in that model's space — swapping the embedder
 would mean re-embedding every theme.
 
 Reads from the environment:
-- `NEBIUS_API_KEY`     (required for non-classifier chat)
+- `NEBIUS_API_KEY`     (required for conversational replies)
 - `NEBIUS_MODEL`       (optional, defaults to `DEFAULT_NEBIUS_MODEL`)
 - `NEBIUS_ENDPOINT`    (optional, defaults to `DEFAULT_NEBIUS_ENDPOINT`)
 - `MISTRAL_API_KEY`    (required for classification and embeddings)
@@ -28,7 +27,7 @@ DEFAULT_MISTRAL_MODEL = "ministral-8b-2512"
 
 
 def build_llm(model: str | None = None, temperature: float = 0) -> ChatOpenAI:
-    """Return the Nebius chat model used by non-classifier nodes."""
+    """Return the Nebius chat model used for conversational replies."""
     api_key = os.environ.get("NEBIUS_API_KEY")
     if not api_key:
         raise RuntimeError(

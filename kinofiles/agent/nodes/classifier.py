@@ -14,6 +14,7 @@ Intent = Literal[
 ]
 
 MovieRole = Literal["seed", "liked", "seen", "wanted", "asked_about"]
+CriteriaAction = Literal["add", "replace", "reset", "keep"]
 
 # Catalog array columns only. Free-text `themes` (moods) are not filter values.
 FILTER_COLUMNS = (
@@ -41,13 +42,29 @@ Intents:
   language) or a fact about a named film.
 - social: greetings, thanks, small talk, or anything unrelated to movies.
 
+Criteria action:
+- add: the user adds constraints using cues such as "also", "and", "with", or
+  "it should have". Example: "Also, it should have some action."
+- replace: the user changes direction using "instead" or "rather", or proposes
+  an unqualified new direction such as "What about a thriller?"
+- reset: the user explicitly says to start over, forget prior preferences, or
+  asks for something completely different.
+- keep: greetings, thanks, factual questions, and turns with no search change.
+
 Entity rules:
 - Copy names as the user said them. Do not invent titles or people.
-- movies: each mentioned film. Use role seed for "like X" / similar-to,
-  liked / seen for taste, wanted for "I want to watch X", asked_about for
-  plot/quality questions. Include year only if the user said it.
+- movies: each mentioned film. Actual titles only — never a person's or
+  studio's name. Use role seed for "like X" / similar-to, liked / seen for
+  taste, wanted for "I want to watch X", asked_about for plot/quality
+  questions. Include year only if the user said it.
 - genres: catalog-style labels when possible (Comedy, Horror, Action, Drama,
   Science Fiction, Thriller, Romance, Animation, Documentary, Fantasy).
+  Extract genre words on every intent, including recommendation and
+  feedback. Words that are not really genres ("heist", "space") belong in
+  themes instead.
+- genres, actors, directors, studios, languages: only constraints the user
+  explicitly stated. Never infer them from a mentioned film — "a movie like
+  The Dark Knight" is not an Action/Thriller request.
 - themes: free-text mood or topic phrases ("funny", "found family", "grief").
 - Leave lists empty when nothing was mentioned. Never guess."""
 
@@ -93,15 +110,25 @@ class Entities(BaseModel):
 class Classification(BaseModel):
     intent: Intent
     entities: Entities = Field(default_factory=Entities)
+    criteria_action: CriteriaAction = Field(
+        default="add",
+        description="How this turn changes the accumulated movie-search criteria.",
+    )
 
     def as_filter(self) -> tuple[str | None, str | None]:
-        """First catalog attribute for the existing direct_request node."""
-        if self.entities.movies:
-            return "name", self.entities.movies[0].title
+        """First catalog attribute for the existing direct_request node.
+
+        Attributes win over `name`: a mentioned title AND-ing with a real
+        filter ("movies by Nolan" -> name ILIKE %Nolan% AND directors ILIKE
+        %Nolan%) produces impossible queries. `name` is the fallback for a
+        title-only ask ("the movie Heat").
+        """
         for column in FILTER_COLUMNS:
             values = getattr(self.entities, column)
             if values:
                 return column, values[0]
+        if self.entities.movies:
+            return "name", self.entities.movies[0].title
         return None, None
 
 
@@ -119,8 +146,8 @@ class Classifier:
                 ]
             )
         except Exception:
-            return Classification(intent="social")
+            return Classification(intent="social", criteria_action="keep")
 
         if not isinstance(result, Classification):
-            return Classification(intent="social")
+            return Classification(intent="social", criteria_action="keep")
         return result
