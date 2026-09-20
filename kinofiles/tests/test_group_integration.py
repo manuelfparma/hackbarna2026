@@ -12,16 +12,24 @@ from tests.test_upgrade import LLM
 
 
 class GroupReplyLLM(LLM):
-    def __init__(self, names=None):
+    def __init__(self, names=None, kind=None):
         super().__init__()
         self.names = ["Alice", "Bob"] if names is None else names
+        if kind is None:
+            self.kind = "participants" if self.names else "movie_request"
+        else:
+            self.kind = kind
 
     def with_structured_output(self, schema):
-        return Mock(invoke=Mock(return_value=SimpleNamespace(names=self.names)))
+        return Mock(
+            invoke=Mock(
+                return_value=SimpleNamespace(kind=self.kind, names=self.names)
+            )
+        )
 
 
-def make_group(*classifications, names=None):
-    reply = GroupReplyLLM(names)
+def make_group(*classifications, names=None, kind=None):
+    reply = GroupReplyLLM(names, kind=kind)
     with (
         patch(
             "agent.orchestrator.build_mistral_llm", return_value=LLM(*classifications)
@@ -66,6 +74,37 @@ class GroupIntegrationTests(unittest.TestCase):
         result = agent.graph.invoke(Command(resume="1"), config)
         self.assertEqual(result["choice"], "First movie")
         self.assertEqual(result["votes"], {"You": "First movie"})
+
+    def test_actor_names_at_welcome_are_a_movie_request_not_participants(self):
+        agent = make_group(
+            Classification(
+                intent="direct_request",
+                entities={"actors": ["Tom Hanks", "Scarlett Johansson"]},
+            ),
+            names=["Tom Hanks", "Scarlett Johansson"],
+            kind="movie_request",
+        )
+        config = {"configurable": {"thread_id": "actors-not-watchers"}}
+        agent.graph.invoke({}, config)
+        event = agent.graph.invoke(
+            Command(resume="Tom Hanks and Scarlett Johansson"), config
+        )
+        state = agent.graph.get_state(config).values
+        self.assertEqual(state["participants"], ["You"])
+        self.assertEqual(
+            state["preferences"]["You"],
+            ["Tom Hanks and Scarlett Johansson"],
+        )
+        self.assertEqual(
+            state["per_person_criteria"]["You"]["actors"],
+            ["Tom Hanks", "Scarlett Johansson"],
+        )
+        self.assertEqual(event["__interrupt__"][0].value["participant"], "You")
+        self.assertEqual(
+            event["__interrupt__"][0].value["options"],
+            ["First movie", "Second movie"],
+        )
+        agent.direct_request_handler.handle.assert_called_once()
 
     def test_named_solo_still_collects_preferences(self):
         agent = make_group(names=["Alice"])
