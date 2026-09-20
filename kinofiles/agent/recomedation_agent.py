@@ -31,7 +31,7 @@ from agent.nodes.catalog import clean_title, resolve_movie
 from agent.nodes.selection import select_movie, match_title
 from agent.nodes.criteria import has_search_terms
 from agent.nodes.criteria import (
-    has_catalog_filters,
+    is_catalog_lookup,
     merge_criteria,
     normalize_criteria,
 )
@@ -410,22 +410,21 @@ class RecommendationAgent:
             and criteria.get("themes")
         ):
             return "theme_recommendation"
-        if intent == "feedback" and has_catalog_filters(entities):
+        if intent == "feedback" and is_catalog_lookup(entities):
             return "direct_request"
-        if intent in {"recommendation", "theme_recommendation"} and has_catalog_filters(
+        if intent in {"recommendation", "theme_recommendation"} and is_catalog_lookup(
             criteria
         ):
             return "direct_request"
         if intent == "recommendation":
             return "theme_recommendation"
-        if (
-            intent == "direct_request"
-            and not has_catalog_filters(criteria)
-            and criteria.get("themes")
-        ):
-            # The catalog filters didn't survive normalization (e.g. "heist"
-            # demoted to a theme) — this is a semantic ask, not a lookup.
-            return "theme_recommendation"
+        if intent == "direct_request" and not is_catalog_lookup(criteria):
+            # Either the catalog filters didn't survive normalization ("heist"
+            # demoted to a theme) or the ask is a bare genre. Both describe a
+            # kind of film, so rank them against the request instead of
+            # returning the tag's highest-rated rows.
+            if criteria.get("themes") or criteria.get("genres"):
+                return "theme_recommendation"
         return intent
 
     def _exclusions(self, state):

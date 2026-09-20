@@ -115,16 +115,9 @@ class ControlTests(unittest.TestCase):
                 criteria_action="add",
             )
         )
-        agent.direct_request_handler.handle = Mock(
-            return_value={
-                "kind": "direct_request",
-                "titles": ["Fresh film"],
-                "error": None,
-            }
-        )
         config = {"configurable": {"thread_id": "compound"}}
         agent.graph.invoke(self.dirty_state("Start over. I want a comedy"), config)
-        criteria = agent.direct_request_handler.handle.call_args.kwargs["criteria"]
+        criteria = agent.theme_recommender.recommend.call_args.kwargs["criteria"]
         self.assertEqual(criteria["genres"], ["Comedy"])
         self.assertEqual(criteria["years"], [])
         self.assertEqual(criteria["actors"], [])

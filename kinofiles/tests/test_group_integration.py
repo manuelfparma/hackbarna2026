@@ -183,7 +183,7 @@ class GroupIntegrationTests(unittest.TestCase):
         self.assertEqual(
             event["__interrupt__"][0].value["options"], ["First movie", "Second movie"]
         )
-        criteria = agent.direct_request_handler.handle.call_args.kwargs["criteria"]
+        criteria = agent.theme_recommender.recommend.call_args.kwargs["criteria"]
         self.assertEqual(criteria["genres"], ["Comedy"])
         self.assertEqual(criteria["minute_max"], 90)
         context = json.loads(
@@ -198,6 +198,31 @@ class GroupIntegrationTests(unittest.TestCase):
         self.assertEqual(event["choice"], "First movie")
         self.assertEqual(event["votes"], {"Alice": "First movie", "Bob": "First movie"})
         self.assertIn("wins", event["farewell"])
+
+    def test_bare_genre_is_ranked_against_the_request_not_by_catalog_rating(self):
+        agent = make_group(
+            Classification(intent="direct_request", entities={"genres": ["Comedy"]}),
+            names=[],
+        )
+        config = {"configurable": {"thread_id": "bare-genre"}}
+        agent.graph.invoke({}, config)
+        agent.graph.invoke(Command(resume="I want to see a comedy movie"), config)
+        agent.direct_request_handler.handle.assert_not_called()
+        call = agent.theme_recommender.recommend.call_args
+        self.assertEqual(call.args[0], "I want to see a comedy movie")
+        self.assertEqual(call.kwargs["criteria"]["genres"], ["Comedy"])
+
+    def test_named_person_still_takes_the_catalog_path(self):
+        agent = make_group(
+            Classification(intent="direct_request", entities={"directors": ["Nolan"]}),
+            names=[],
+        )
+        config = {"configurable": {"thread_id": "named-director"}}
+        agent.graph.invoke({}, config)
+        agent.graph.invoke(Command(resume="Something by Nolan"), config)
+        agent.theme_recommender.recommend.assert_not_called()
+        criteria = agent.direct_request_handler.handle.call_args.kwargs["criteria"]
+        self.assertEqual(criteria["directors"], ["Nolan"])
 
     def test_group_merge_keeps_upstream_genre_policy_and_new_scalar_bounds(self):
         criteria, notes = merge_group_criteria(

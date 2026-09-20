@@ -12,7 +12,7 @@ from agent.llm import build_llm, build_mistral_llm
 from agent.nodes.classifier import ClassificationError, Classifier
 from agent.nodes.criteria import (
     empty_criteria,
-    has_catalog_filters,
+    is_catalog_lookup,
     merge_criteria,
     merge_group_criteria,
 )
@@ -312,12 +312,14 @@ class OrquestratorAgent:
         )
         logger.info("mediate | round=%s | merged_query=%r", round_no, req)
 
-        if has_catalog_filters(merged) and not merged.get("themes"):
-            # They want a specific director/actor/etc without mood qualifiers
+        if is_catalog_lookup(merged):
+            # A named director/actor/year/service: rating order is the only
+            # ranking available, and the group's wording adds nothing.
             route = "direct_request"
             result = self.direct_request_handler.handle(None, None, criteria=merged)
         else:
-            # Re-use theme_recommender for semantics (or semantics + strict genre bounds)
+            # Everything else — genres, moods, or an open ask — is ranked
+            # against what the group said, with genres kept as hard bounds.
             route = "theme_recommender"
             result = self.theme_recommender.recommend(req, feedback=[], criteria=merged)
 

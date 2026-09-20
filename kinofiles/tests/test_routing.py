@@ -33,6 +33,28 @@ class RouteTests(unittest.TestCase):
 
         self.assertEqual(route("direct_request", entities, criteria), "direct_request")
 
+    def test_bare_genre_is_ranked_semantically_not_by_catalog_rating(self):
+        for intent in ("direct_request", "recommendation", "theme_recommendation"):
+            with self.subTest(intent=intent):
+                entities = {"genres": ["Comedy"]}
+                criteria = normalize_criteria(entities)
+
+                self.assertEqual(
+                    route(intent, entities, criteria), "theme_recommendation"
+                )
+
+    def test_genre_alongside_a_named_person_is_still_a_lookup(self):
+        entities = {"genres": ["Comedy"], "actors": ["Adam Sandler"]}
+        criteria = normalize_criteria(entities)
+
+        self.assertEqual(route("direct_request", entities, criteria), "direct_request")
+
+    def test_runtime_only_brief_has_nothing_to_rank_semantically(self):
+        entities = {"duration": ["under 90 minutes"]}
+        criteria = normalize_criteria(entities)
+
+        self.assertEqual(route("direct_request", entities, criteria), "direct_request")
+
     def test_factual_request_keeps_fact_path(self):
         entities = {"movies": [{"title": "Inception", "role": "asked_about"}]}
         criteria = normalize_criteria(entities)
