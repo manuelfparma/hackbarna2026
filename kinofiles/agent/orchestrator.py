@@ -70,6 +70,7 @@ class State(TypedDict):
     # Session
     farewell: str
     group_feedback: list[str]
+    inline_feedback: str
 
 
 class OrquestratorAgent:
@@ -372,14 +373,19 @@ class OrquestratorAgent:
         ans = interrupt(prompt(msg, movies, participant=person)).strip()
 
         vote_val = "none"
+        inline_fb = ""
         if ans.isdigit() and 1 <= int(ans) <= len(movies):
             vote_val = movies[int(ans) - 1]
+        elif ans:
+            # The user typed text instead of a number — that IS their feedback.
+            inline_fb = ans
 
         return Command(
             goto="group_vote",
             update={
                 "votes": {**state.get("votes", {}), person: vote_val},
                 "current_participant": idx + 1,
+                "inline_feedback": inline_fb,
             },
         )
 
@@ -390,9 +396,13 @@ class OrquestratorAgent:
             fallback = movies[0] if movies else "something fun"
             return Command(goto="goodbye", update={"choice": fallback})
 
-        msg = "What else are you looking for?"
-        movies = state.get("movies", [])
-        ans = interrupt(prompt(msg, options=movies))
+        # If the user already gave text feedback during the vote step, use it
+        # directly instead of asking again.
+        ans = state.get("inline_feedback", "")
+        if not ans:
+            msg = "What else are you looking for?"
+            movies = state.get("movies", [])
+            ans = interrupt(prompt(msg, options=movies))
 
         group_fb = list(state.get("group_feedback", []))
         group_fb.append(ans)
@@ -421,6 +431,7 @@ class OrquestratorAgent:
                 "group_criteria": new_group,
                 "group_feedback": group_fb,
                 "round": state.get("round", 1) + 1,
+                "inline_feedback": "",
             },
         )
 
