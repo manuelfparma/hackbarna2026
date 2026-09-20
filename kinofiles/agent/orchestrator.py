@@ -11,11 +11,13 @@ from agent.io.turn import prompt
 from agent.llm import build_llm, build_mistral_llm
 from agent.nodes.classifier import ClassificationError, Classifier
 from agent.nodes.criteria import (
+    clear_criteria,
     empty_criteria,
     is_catalog_lookup,
     merge_criteria,
     merge_group_criteria,
 )
+from agent.nodes.criteria_commands import CriteriaCommand, parse_criteria_command
 from agent.nodes.direct_request import DirectRequestHandler
 from agent.nodes.reply import MAX_HISTORY_TURNS, ReplyComposer
 from agent.nodes.theme_recommender import ThemeRecommender
@@ -236,6 +238,122 @@ class OrquestratorAgent:
             },
         )
 
+    def _cleared_group(self, state: State) -> dict:
+        """Every place a stale constraint can hide, emptied.
+
+        Clearing `group_criteria` is not enough: `mediate` embeds the
+        participants' raw utterances alongside the structured brief, so the
+        accumulated text has to go too or the next search still chases what
+        the group just abandoned.
+        """
+        names = state.get("participants", [])
+        return {
+            "group_criteria": {},
+            "per_person_criteria": {name: empty_criteria() for name in names},
+            "preferences": {name: [] for name in names},
+            "group_feedback": [],
+            "history": [],
+            "movies": [],
+            "votes": {},
+            "show_options": False,
+            "inline_feedback": "",
+            "round": 1,
+        }
+
+    def _pruned_group(self, state: State, fields: tuple[str, ...]) -> dict:
+        """Drop one field group everywhere, including the cached wording."""
+        update = self._cleared_group(state)
+        update.pop("round")
+        update["group_criteria"] = clear_criteria(state.get("group_criteria"), fields)
+        update["per_person_criteria"] = {
+            name: clear_criteria(criteria, fields)
+            for name, criteria in (state.get("per_person_criteria") or {}).items()
+        }
+        return update
+
+    def _group_control(
+        self,
+        state: State,
+        control: CriteriaCommand,
+        speaker: str | None = None,
+        idx: int | None = None,
+    ) -> Command:
+        """Apply an explicit reset or removal before the classifier sees it.
+
+        Deterministic on purpose, so "start over" still works while the
+        classifier is unavailable, matching the solo agent's contract.
+        """
+        if control.action == "reset":
+            update = self._cleared_group(state)
+            message = "I've cleared everything."
+        else:
+            update = self._pruned_group(state, control.fields)
+            message = f"I've dropped the {', '.join(control.fields)} filter."
+        logger.info(
+            "group_control | action=%s | fields=%s | remainder=%r",
+            control.action,
+            control.fields,
+            control.remainder,
+        )
+        update["response"] = message
+        update["result"] = {
+            "kind": "criteria_changed",
+            "action": control.action,
+            "fields": list(control.fields),
+            "titles": [],
+            "error": None,
+        }
+
+        mid_interview = speaker is not None and idx is not None
+
+        if not control.remainder:
+            if mid_interview:
+                # They spent their turn on a control instead of a preference,
+                # so ask again — from the top when the slate was wiped.
+                update["current_participant"] = 0 if control.action == "reset" else idx
+                return Command(goto="collect_preferences", update=update)
+            if control.action == "remove":
+                return Command(goto="mediate", update=update)
+            update["current_participant"] = 0
+            return Command(goto="collect_preferences", update=update)
+
+        try:
+            classified = self.classifier.classify(control.remainder)
+        except ClassificationError:
+            # The state change stands; only the new request is lost.
+            failure = self._classification_failure(
+                "collect_preferences" if mid_interview else "refine"
+            )
+            update.update(failure.update)
+            update["response"] = f"{message} {failure.update['response']}"
+            if mid_interview:
+                update["current_participant"] = idx
+            return Command(goto=failure.goto, update=update)
+
+        criteria = merge_criteria(
+            empty_criteria(),
+            classified.entities.model_dump(),
+            classified.criteria_action,
+            classified.clear_fields,
+        )
+        if mid_interview:
+            # Keep the interview order: the speaker just answered, so carry on
+            # with whoever is next instead of asking them again.
+            update["preferences"] = {
+                **update["preferences"],
+                speaker: [control.remainder],
+            }
+            update["per_person_criteria"] = {
+                **update["per_person_criteria"],
+                speaker: criteria,
+            }
+            update["current_participant"] = idx + 1
+            return Command(goto="collect_preferences", update=update)
+
+        update["group_criteria"] = criteria
+        update["group_feedback"] = [control.remainder]
+        return Command(goto="mediate", update=update)
+
     def collect_preferences(self, state: State) -> Command:
         names = state["participants"]
         idx = state["current_participant"]
@@ -245,9 +363,16 @@ class OrquestratorAgent:
 
         person = names[idx]
         msg = f"{person}, what are you in the mood for?" if person else "What are you in the mood for?"
-        if (state.get("result") or {}).get("kind") == "classification_error":
+        if (state.get("result") or {}).get("kind") in {
+            "classification_error",
+            "criteria_changed",
+        }:
             msg = f"{state['response']}\n{msg}"
         text = interrupt(prompt(msg, participant=person))
+
+        control = parse_criteria_command(text)
+        if control:
+            return self._group_control(state, control, speaker=person, idx=idx)
 
         # Classify
         try:
@@ -405,6 +530,11 @@ class OrquestratorAgent:
 
         ans = interrupt(prompt(msg, movies, participant=person)).strip()
 
+        control = parse_criteria_command(ans)
+        if control:
+            # Abandoning the search outranks finishing the ballot.
+            return self._group_control(state, control)
+
         vote_val = "none"
         inline_fb = ""
         if ans.isdigit() and 1 <= int(ans) <= len(movies):
@@ -436,6 +566,10 @@ class OrquestratorAgent:
             msg = "What else are you looking for?"
             movies = state.get("movies", [])
             ans = interrupt(prompt(msg, options=movies))
+
+        control = parse_criteria_command(ans)
+        if control:
+            return self._group_control(state, control)
 
         group_fb = list(state.get("group_feedback", []))
         group_fb.append(ans)

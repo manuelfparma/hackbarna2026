@@ -199,6 +199,118 @@ class GroupIntegrationTests(unittest.TestCase):
         self.assertEqual(event["votes"], {"Alice": "First movie", "Bob": "First movie"})
         self.assertIn("wins", event["farewell"])
 
+    def test_reset_at_vote_clears_the_brief_and_the_remembered_wording(self):
+        for answer in ["nevermind", "Start over", "Please reset all filters"]:
+            with self.subTest(answer=answer):
+                agent = make_group(
+                    Classification(
+                        intent="direct_request", entities={"genres": ["Comedy"]}
+                    ),
+                    names=["Alice"],
+                )
+                config = {"configurable": {"thread_id": f"group-reset-{answer}"}}
+                agent.graph.invoke({}, config)
+                agent.graph.invoke(Command(resume="Alice"), config)
+                agent.graph.invoke(Command(resume="A 90s comedy"), config)
+                agent.classifier.llm.invoke = Mock(side_effect=RuntimeError("offline"))
+
+                event = agent.graph.invoke(Command(resume=answer), config)
+
+                state = agent.graph.get_state(config).values
+                self.assertEqual(state["preferences"], {"Alice": []})
+                self.assertEqual(
+                    state["per_person_criteria"], {"Alice": normalize_criteria({})}
+                )
+                self.assertEqual(state["group_criteria"], {})
+                self.assertEqual(state["group_feedback"], [])
+                self.assertEqual(state["history"], [])
+                self.assertEqual(state["movies"], [])
+                self.assertEqual(state["round"], 1)
+                self.assertEqual(event["__interrupt__"][0].value["participant"], "Alice")
+                self.assertIn("cleared", event["__interrupt__"][0].value["text"])
+
+    def test_reset_with_a_new_request_searches_it_alone(self):
+        agent = make_group(
+            Classification(intent="direct_request", entities={"genres": ["Comedy"]}),
+            Classification(intent="direct_request", entities={"genres": ["Horror"]}),
+            names=["Alice"],
+        )
+        config = {"configurable": {"thread_id": "group-reset-remainder"}}
+        agent.graph.invoke({}, config)
+        agent.graph.invoke(Command(resume="Alice"), config)
+        agent.graph.invoke(Command(resume="A 90s comedy"), config)
+
+        agent.graph.invoke(Command(resume="Start over. I want horror"), config)
+
+        state = agent.graph.get_state(config).values
+        self.assertEqual(state["preferences"], {"Alice": []})
+        self.assertEqual(state["group_feedback"], ["I want horror"])
+        call = agent.theme_recommender.recommend.call_args
+        self.assertEqual(call.args[0], "I want horror")
+        self.assertEqual(call.kwargs["criteria"]["genres"], ["Horror"])
+
+    def test_reset_mid_interview_restarts_it_without_reasking_the_speaker(self):
+        agent = make_group(
+            Classification(intent="direct_request", entities={"genres": ["Comedy"]}),
+            Classification(intent="direct_request", entities={"genres": ["Horror"]}),
+            names=["Alice", "Bob"],
+        )
+        config = {"configurable": {"thread_id": "group-reset-interview"}}
+        agent.graph.invoke({}, config)
+        agent.graph.invoke(Command(resume="Alice and Bob"), config)
+        agent.graph.invoke(Command(resume="A 90s comedy"), config)
+
+        event = agent.graph.invoke(
+            Command(resume="Start over. I want horror"), config
+        )
+
+        state = agent.graph.get_state(config).values
+        self.assertEqual(state["preferences"], {"Alice": [], "Bob": ["I want horror"]})
+        self.assertEqual(state["per_person_criteria"]["Alice"], normalize_criteria({}))
+        self.assertEqual(state["per_person_criteria"]["Bob"]["genres"], ["Horror"])
+        self.assertEqual(event["__interrupt__"][0].value["participant"], "Alice")
+
+    def test_removal_mid_interview_reasks_the_same_person_instead_of_searching(self):
+        agent = make_group(
+            Classification(intent="direct_request", entities={"genres": ["Comedy"]}),
+            names=["Alice", "Bob"],
+        )
+        config = {"configurable": {"thread_id": "group-remove-interview"}}
+        agent.graph.invoke({}, config)
+        agent.graph.invoke(Command(resume="Alice and Bob"), config)
+        agent.graph.invoke(Command(resume="A 90s comedy"), config)
+
+        event = agent.graph.invoke(Command(resume="Forget about the 90s"), config)
+
+        self.assertEqual(event["__interrupt__"][0].value["participant"], "Bob")
+        agent.theme_recommender.recommend.assert_not_called()
+        state = agent.graph.get_state(config).values
+        self.assertEqual(state["per_person_criteria"]["Alice"]["time_periods"], [])
+        self.assertEqual(state["per_person_criteria"]["Alice"]["genres"], ["Comedy"])
+
+    def test_group_removal_drops_the_field_from_every_persons_brief(self):
+        agent = make_group(names=["Alice"])
+        state = {
+            "participants": ["Alice"],
+            "round": 1,
+            "group_criteria": normalize_criteria(
+                {"years": [2020], "genres": ["Comedy"]}
+            ),
+            "per_person_criteria": {
+                "Alice": normalize_criteria({"years": [2020], "genres": ["Comedy"]})
+            },
+            "preferences": {"Alice": ["A comedy from 2020"]},
+            "group_feedback": [],
+        }
+        with patch("agent.orchestrator.interrupt", return_value="Forget about 2020"):
+            command = agent.refine(state)
+
+        self.assertEqual(command.goto, "mediate")
+        self.assertEqual(command.update["group_criteria"]["years"], [])
+        self.assertEqual(command.update["group_criteria"]["genres"], ["Comedy"])
+        self.assertEqual(command.update["per_person_criteria"]["Alice"]["years"], [])
+        self.assertEqual(command.update["preferences"], {"Alice": []})
+
     def test_bare_genre_is_ranked_against_the_request_not_by_catalog_rating(self):
         agent = make_group(
             Classification(intent="direct_request", entities={"genres": ["Comedy"]}),
