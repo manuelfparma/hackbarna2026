@@ -1,12 +1,22 @@
 """Theme-based recommendation: nearest themes via pgvector, then movies."""
 
+from data_management.theme_embeddings_pipeline import (
+    EMBEDDING_MODEL,
+    _client,
+    _load_env,
+)
 import logging
 
-from data_management.theme_embeddings_pipeline import EMBEDDING_MODEL, _client, _load_env
 from langchain_mistralai import MistralAIEmbeddings
 
 from agent.nodes.catalog import resolve_movie
-from agent.nodes.criteria import build_theme_query, normalize_criteria
+from agent.nodes.criteria import build_theme_query, normalize_criteria, has_search_terms
+from agent.nodes.description_search import (
+    DESC_MATCH_THRESHOLD,
+    search_descriptions,
+)
+from agent.nodes.filters import apply_filters
+import random
 
 logger = logging.getLogger(__name__)
 
@@ -35,11 +45,16 @@ class ThemeRecommender:
         request: str,
         feedback: list[str] | None = None,
         criteria: dict | None = None,
+        exclude_names: list[str] | None = None,
+        search_mode: str = "auto",
     ) -> dict:
         """Return ranked titles and human-readable evidence, not presentation copy."""
         normalized_criteria = normalize_criteria(criteria)
         genres = normalized_criteria["genres"]
-        supabase = self._connect()
+        try:
+            supabase = self._connect()
+        except Exception:
+            supabase = None
         if supabase is None:
             return {
                 "kind": "theme_recommendation",
@@ -48,14 +63,52 @@ class ThemeRecommender:
                 "error": "I couldn't connect to the movie catalog.",
             }
 
+        if search_mode == "browse" and not has_search_terms(normalized_criteria):
+            try:
+                query = apply_filters(
+                    supabase.table("movies").select("name, rating, description"),
+                    normalized_criteria,
+                    exclude_names,
+                )
+                rows = query.order("rating", desc=True).limit(200).execute().data or []
+                titles = [
+                    row["name"]
+                    for row in random.sample(rows, min(MOVIE_LIMIT, len(rows)))
+                ]
+                return {
+                    "kind": "browse",
+                    "titles": titles,
+                    "descriptions": {
+                        row["name"]: row.get("description", "")
+                        for row in rows
+                        if row["name"] in titles
+                    },
+                    "error": None
+                    if titles
+                    else "No unseen movies match your criteria.",
+                }
+            except Exception:
+                return {
+                    "kind": "browse",
+                    "titles": [],
+                    "error": "I could not browse the catalog.",
+                }
+
         seeds = [
-            movie["title"]
+            movie
             for movie in normalized_criteria["movies"]
             if movie.get("role") in {"seed", "liked"} and movie.get("title")
         ]
         if seeds:
             similar = self._similar_to(
-                supabase, seeds[0], request, feedback, normalized_criteria, genres
+                supabase,
+                seeds[-1]["title"],
+                request,
+                feedback,
+                normalized_criteria,
+                genres,
+                exclude_names,
+                seeds[-1].get("year"),
             )
             if similar is not None:
                 return similar
@@ -67,12 +120,58 @@ class ThemeRecommender:
         if notes:
             query_text = f"{query_text}; {'; '.join(notes)}"
         logger.info(
-            "theme_search | embedded_query=%r | genre_filter=%s",
+            "theme_search | embedded_query=%r | genre_filter=%s | search_mode=%s",
             query_text,
             genres or None,
+            search_mode,
         )
-        vector = self._embeddings.embed_query(query_text)
+        if search_mode == "description" or (
+            search_mode == "auto" and normalized_criteria["themes"]
+        ):
+            try:
+                candidates = search_descriptions(
+                    supabase,
+                    self._embeddings,
+                    query_text,
+                    criteria=normalized_criteria,
+                    exclude_names=exclude_names,
+                    limit=MOVIE_LIMIT,
+                )
+                if (
+                    candidates
+                    and candidates[0].get("similarity", 0) >= DESC_MATCH_THRESHOLD
+                ):
+                    cutoff = max(
+                        DESC_MATCH_THRESHOLD, candidates[0]["similarity"] - 0.10
+                    )
+                    top = [
+                        row for row in candidates if row.get("similarity", 0) >= cutoff
+                    ]
+                    return {
+                        "kind": "description_match",
+                        "titles": [row["name"] for row in top],
+                        "descriptions": {
+                            row["name"]: row.get("description", "") for row in top
+                        },
+                        "genres": genres,
+                        "guessed": search_mode == "description",
+                        "error": None,
+                    }
+                if search_mode == "description":
+                    return {
+                        "kind": "description_match",
+                        "titles": [],
+                        "error": "I could not confidently identify that plot. Do you remember another scene?",
+                    }
+            except Exception:
+                if search_mode == "description":
+                    return {
+                        "kind": "description_match",
+                        "titles": [],
+                        "error": "Plot search is unavailable right now.",
+                    }
         try:
+            vector = self._embeddings.embed_query(query_text)
             matches = (
                 supabase.rpc(
                     "match_themes",
@@ -109,12 +208,19 @@ class ThemeRecommender:
             "theme_search | matched_themes=%s",
             [(row["theme"], round(row["similarity"], 3)) for row in kept],
         )
-        movie_query = supabase.table("movies").select("name, rating, themes, description")
         if genres:
             # Array containment: a movie must carry EVERY listed genre.
             logger.info("theme_search | genres @> %s (AND)", genres)
-            movie_query = movie_query.contains("genres", genres)
+        logger.info(
+            "theme_search | criteria=%s",
+            {key: value for key, value in normalized_criteria.items() if value},
+        )
         try:
+            movie_query = apply_filters(
+                supabase.table("movies").select("name, rating, themes, description"),
+                normalized_criteria,
+                exclude_names,
+            )
             movies = movie_query.execute().data or []
         except Exception:
             return {
@@ -138,7 +244,15 @@ class ThemeRecommender:
             hit = sorted(set(movie.get("themes") or []).intersection(weights))
             if hit:
                 score = sum(weights[theme] for theme in hit)
-                scored.append((score, movie.get("rating") or 0.0, movie["name"], hit, movie.get("description", "")))
+                scored.append(
+                    (
+                        score,
+                        movie.get("rating") or 0.0,
+                        movie["name"],
+                        hit,
+                        movie.get("description", ""),
+                    )
+                )
         # Ties on theme overlap are common, so the better-rated film wins.
         scored.sort(key=lambda item: (-item[0], -item[1], item[2]))
         top = scored[:MOVIE_LIMIT]
@@ -170,6 +284,8 @@ class ThemeRecommender:
         feedback: list[str] | None,
         criteria: dict,
         genres: list[str],
+        exclude_names: list[str] | None = None,
+        seed_year: int | None = None,
     ) -> dict | None:
         """Nearest description-embedding neighbors of a resolved seed film.
 
@@ -179,7 +295,7 @@ class ThemeRecommender:
         refinement language ("...but darker") the turn carried.
         """
         try:
-            seed = resolve_movie(supabase, seed_title)
+            seed = resolve_movie(supabase, seed_title, seed_year)
         except Exception:
             return None
         if not seed or not (seed.get("description") or "").strip():
@@ -187,7 +303,6 @@ class ThemeRecommender:
 
         parts = [seed["description"].strip()]
         parts.extend(criteria["themes"])
-        parts.extend(criteria["audience"])
         parts.extend(criteria["time_periods"])
         parts.extend(item for item in (feedback or []) if item and item != request)
         query_text = "; ".join(dict.fromkeys(part for part in parts if part))
@@ -198,55 +313,23 @@ class ThemeRecommender:
             genres or None,
         )
 
-        vector = self._embeddings.embed_query(query_text)
         try:
-            matches = (
-                supabase.rpc(
-                    "match_descriptions",
-                    {
-                        "query_embedding": vector,
-                        "match_count": SIMILAR_MATCH_COUNT,
-                    },
-                )
-                .execute()
-                .data
-                or []
+            candidates = search_descriptions(
+                supabase,
+                self._embeddings,
+                query_text,
+                criteria=criteria,
+                exclude_ids=[seed["id"]],
+                exclude_names=exclude_names,
+                match_count=40,
+                limit=MOVIE_LIMIT,
             )
         except Exception:
             return None
 
-        candidates = [row for row in matches if row["movie_id"] != seed["id"]]
-        if genres and candidates:
-            ids = [row["movie_id"] for row in candidates]
-            try:
-                rows = (
-                    supabase.table("movies")
-                    .select("id, genres")
-                    .in_("id", ids)
-                    .execute()
-                    .data
-                    or []
-                )
-            except Exception:
-                return None
-            wanted = {genre.casefold() for genre in genres}
-            allowed = {
-                row["id"]
-                for row in rows
-                if wanted <= {g.casefold() for g in (row.get("genres") or [])}
-            }
-            before = len(candidates)
-            candidates = [row for row in candidates if row["movie_id"] in allowed]
-            logger.info(
-                "similar_search | genre filter %s (AND) kept %s/%s candidates",
-                genres,
-                len(candidates),
-                before,
-            )
-
         top = candidates[:MOVIE_LIMIT]
         titles = [row["name"] for row in top]
-        
+
         descriptions = {}
         if top:
             ids_to_fetch = [row["movie_id"] for row in top]
@@ -262,7 +345,7 @@ class ThemeRecommender:
                 descriptions = {r["name"]: r.get("description", "") for r in rows}
             except Exception:
                 pass
-                
+
         if not titles:
             label = " + ".join(genres) if genres else "those constraints"
             return {

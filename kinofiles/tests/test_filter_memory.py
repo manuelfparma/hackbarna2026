@@ -58,6 +58,9 @@ class RecordingQuery:
         self.calls.append((column, values))
         return self
 
+    def neq(self, *_args):
+        return self
+
     def order(self, *_args, **_kwargs):
         return self
 

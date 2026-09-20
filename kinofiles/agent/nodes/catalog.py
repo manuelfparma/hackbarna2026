@@ -4,7 +4,7 @@ import re
 
 MOVIE_COLUMNS = (
     "id, name, date, tagline, description, minute, rating,"
-    " genres, themes, studios, languages, actors, directors, poster"
+    " genres, themes, studios, languages, actors, directors, poster, streaming"
 )
 
 # Resolved ReDial mentions arrive as "Super Troopers (2001)"; the catalog
@@ -29,15 +29,12 @@ def resolve_movie(supabase, title: str, year: int | None = None) -> dict | None:
     if not clean:
         return None
 
-    rows = (
-        supabase.table("movies")
-        .select(MOVIE_COLUMNS)
-        .ilike("name", clean)
-        .limit(1)
-        .execute()
-        .data
-        or []
-    )
+    suffix = re.search(r"\((\d{4})\)\s*$", title)
+    year = year or (int(suffix[1]) if suffix else None)
+    query = supabase.table("movies").select(MOVIE_COLUMNS).ilike("name", clean)
+    if year is not None:
+        query = query.eq("date", year)
+    rows = query.limit(1).execute().data or []
     if rows:
         return rows[0]
 
@@ -52,8 +49,7 @@ def resolve_movie(supabase, title: str, year: int | None = None) -> dict | None:
             .data
             or []
         )
-        if rows:
-            return rows[0]
+        return rows[0] if rows else None
 
     rows = (
         supabase.table("movies")
