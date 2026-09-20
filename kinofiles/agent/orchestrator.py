@@ -351,7 +351,7 @@ class OrquestratorAgent:
                     tally[v] = tally.get(v, 0) + 1
             if not tally:
                 return Command(
-                    goto="refine", update={"response": "Nobody liked those options."}
+                    goto="refine", update={"response": ""}
                 )
 
             # Check for tie
@@ -390,9 +390,9 @@ class OrquestratorAgent:
             fallback = movies[0] if movies else "something fun"
             return Command(goto="goodbye", update={"choice": fallback})
 
-        text = state.get("response", "Let's try again.")
-        msg = f"{text}\nWhat should we change? (e.g. 'less sci-fi, more comedy')"
-        ans = interrupt(prompt(msg))
+        msg = "What else are you looking for?"
+        movies = state.get("movies", [])
+        ans = interrupt(prompt(msg, options=movies))
 
         group_fb = list(state.get("group_feedback", []))
         group_fb.append(ans)
