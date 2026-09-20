@@ -40,7 +40,7 @@ Intents:
 - feedback: reacting to recommendations already given (likes, dislikes, change them).
 - direct_request: movies by a catalog attribute (director, actor, genre, studio,
   language) or a fact about a named film.
-- social: greetings, thanks, small talk, or anything unrelated to movies.
+- social: greetings, thanks, small talk, questions about your identity (e.g., "are you a human or a bot?"), or anything unrelated to movies.
 
 Criteria action:
 - add: the user adds constraints using cues such as "also", "and", "with", or

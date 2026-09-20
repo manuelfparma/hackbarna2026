@@ -62,7 +62,7 @@ class DirectRequestHandler:
             return result
 
         try:
-            query = self.supabase.table("movies").select("name")
+            query = self.supabase.table("movies").select("name, description")
             if title:
                 # name is citext + pg_trgm: fuzzy title search.
                 query = query.ilike("name", f"%{title}%")
@@ -79,7 +79,7 @@ class DirectRequestHandler:
                         query = query.ilike(
                             f"{filter_column}_text", f"%{clean_title(item)}%"
                         )
-            res = query.order("rating", desc=True).limit(5).execute()
+            res = query.order("rating", desc=True).limit(8).execute()
             movies = res.data
 
             if not movies:
@@ -90,6 +90,7 @@ class DirectRequestHandler:
                 return result
 
             result["titles"] = [movie["name"] for movie in movies]
+            result["descriptions"] = {movie["name"]: movie.get("description", "") for movie in movies}
             return result
         except Exception:
             result["error"] = "I couldn't search the movie catalog right now."

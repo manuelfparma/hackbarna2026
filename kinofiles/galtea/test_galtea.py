@@ -14,18 +14,15 @@ if not GALTEA_API_KEY:
 
 galtea = Galtea(api_key=GALTEA_API_KEY)
 
-# Generate a unique thread ID for the session
-session_id = str(uuid.uuid4())
+from galtea import AgentInput, AgentResponse
 
-def my_agent(messages: list[dict]) -> str:
+def my_agent(input_data: AgentInput) -> AgentResponse:
     """Wrapper function that Galtea will call to test our agent."""
-    # messages follows the standard chat format:
-    # [{"role": "user", "content": "..."}, {"role": "assistant", "content": "..."}, ...]
-    user_message = messages[-1]['content']
+    user_message = input_data.last_user_message_str()
     
     url = "http://localhost:8000/api/agent/chat"
     payload = {
-        "thread_id": session_id,
+        "thread_id": input_data.session_id,
         "message": user_message
     }
     
@@ -33,10 +30,9 @@ def my_agent(messages: list[dict]) -> str:
         response = requests.post(url, json=payload, timeout=30)
         response.raise_for_status()
         data = response.json()
-        # Return the actual text reply from our orchestrator
-        return data.get("reply", "No reply found")
+        return AgentResponse(content=data.get("reply", "No reply found"))
     except Exception as e:
-        return f"Error connecting to agent: {str(e)}"
+        return AgentResponse(content=f"Error connecting to agent: {str(e)}")
 
 def run_eval():
     print("Fetching product and version...")

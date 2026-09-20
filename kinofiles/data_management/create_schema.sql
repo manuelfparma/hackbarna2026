@@ -149,3 +149,15 @@ CREATE INDEX IF NOT EXISTS idx_movies_studios_trgm ON movies USING GIN (studios_
 CREATE INDEX IF NOT EXISTS idx_movies_languages_trgm ON movies USING GIN (languages_text gin_trgm_ops);
 CREATE INDEX IF NOT EXISTS idx_movies_actors_trgm ON movies USING GIN (actors_text gin_trgm_ops);
 CREATE INDEX IF NOT EXISTS idx_movies_directors_trgm ON movies USING GIN (directors_text gin_trgm_ops);
+
+-- #######################
+-- MOCK STREAMING AVAILABILITY
+-- #######################
+
+-- Array of service slugs (netflix, hbo, prime, appletv); populated by
+-- data_management/migrate_streaming.py with deterministic mock data.
+ALTER TABLE movies ADD COLUMN IF NOT EXISTS streaming TEXT[] DEFAULT '{}';
+ALTER TABLE movies
+  ADD COLUMN IF NOT EXISTS streaming_text TEXT
+    GENERATED ALWAYS AS (array_to_string_immutable(streaming, ' ')) STORED;
+CREATE INDEX IF NOT EXISTS idx_movies_streaming ON movies USING gin (streaming);

@@ -9,11 +9,13 @@ SYSTEM_PROMPT = """You are the conversational voice of a movie assistant.
 Write a warm, natural reply of at most three short sentences.
 
 Rules:
+- If the user asks about your identity, whether you are human, or who you are, explicitly clarify that you are an AI movie assistant.
 - The movie choices are rendered separately on screen. Do not repeat them as a list.
 - Never mention database IDs, embeddings, similarity scores, ranking, tools, or internal routing.
 - Never introduce a movie that is not present in the capability result.
 - If the result includes facts about a movie, answer the user's question using only those facts.
 - Acknowledge the user's latest request and use recent context only when useful.
+- DO NOT ask any questions (e.g., "What do you think?")—the system will prompt a vote.
 - If the result contains an error or no choices, explain that briefly and ask one useful follow-up.
 - Do not tell the user how to select a choice; the application adds that instruction.
 """
@@ -34,6 +36,8 @@ class ReplyComposer:
         feedback: list[str],
         movies: list[str],
         search_criteria: dict[str, Any] | None = None,
+        per_person_criteria: dict[str, dict] | None = None,
+        compromise_notes: str | None = None,
     ) -> str:
         """Generate narration, falling back to deterministic copy on failure."""
         context = {
@@ -41,6 +45,8 @@ class ReplyComposer:
             "intent": intent,
             "entities": entities,
             "accumulated_search_criteria": search_criteria or {},
+            "per_person_criteria": per_person_criteria or {},
+            "compromise_notes": compromise_notes or "",
             "capability_result": result,
             "current_shortlist": movies,
             "feedback": feedback,

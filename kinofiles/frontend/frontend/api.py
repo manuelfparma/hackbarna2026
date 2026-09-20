@@ -26,9 +26,10 @@ tts = TTS()
 class ChatRequest(BaseModel):
     thread_id: str
     message: str | None = None
+    voice: str | None = None
 
 
-def _reply(status: str, text: str, options: list[str] | None = None, **extra) -> dict:
+def _reply(status: str, text: str, options: list[str] | None = None, voice: str | None = None, **extra) -> dict:
     """Build a chat response, synthesizing speech for `text` alongside it.
 
     Only `text` is narrated: `options` are for the screen, so they never
@@ -40,7 +41,10 @@ def _reply(status: str, text: str, options: list[str] | None = None, **extra) ->
     payload = {"status": status, "reply": text, "options": options or [], **extra}
     if text.strip():
         try:
-            payload["audio"] = base64.b64encode(tts.synthesize(text)).decode()
+            if voice:
+                payload["audio"] = base64.b64encode(tts.synthesize(text, voice=voice)).decode()
+            else:
+                payload["audio"] = base64.b64encode(tts.synthesize(text)).decode()
         except Exception:
             payload["audio"] = None
     return payload
@@ -60,16 +64,40 @@ def chat_with_agent(req: ChatRequest):
         if "__interrupt__" in event:
             # The agent is asking a question, optionally offering choices.
             pending = event["__interrupt__"][0].value
+            
+            state = agent_instance.graph.get_state(config).values
+            participants = state.get("participants", [])
+            votes = state.get("votes", {})
+            current_participant_idx = state.get("current_participant", 0)
+            current_participant = pending.get("participant")
+            if not current_participant and participants and current_participant_idx < len(participants):
+                current_participant = participants[current_participant_idx]
+                
             return _reply(
                 "waiting_for_input",
                 pending["text"],
                 options=pending["options"],
+                voice=req.voice,
+                participant=current_participant,
+                participants=participants,
+                votes=votes,
+                criteria=pending.get("criteria", {}),
             )
 
         if "farewell" in event:
-            return _reply("done", event["farewell"], choice=event.get("choice"))
+            state = agent_instance.graph.get_state(config).values
+            return _reply(
+                "done", 
+                event["farewell"], 
+                choice=event.get("choice"),
+                voice=req.voice,
+                participants=state.get("participants", []),
+                votes=state.get("votes", {})
+            )
 
         return {"status": "unknown", "reply": "An unexpected error occurred."}
 
     except Exception as e:
-        return {"status": "error", "reply": str(e)}
+        # Log the internal error but return a user-friendly message
+        print(f"Internal Agent Error: {str(e)}")
+        return {"status": "error", "reply": "I'm experiencing a temporary technical issue. Please try again in a moment!"}
