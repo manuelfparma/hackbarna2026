@@ -79,7 +79,7 @@ def chat_with_agent(req: ChatRequest):
                 options=pending["options"],
                 voice=req.voice,
                 participant=current_participant,
-                participants=participants,
+                participants=[p for p in participants if p],
                 votes=votes,
                 criteria=pending.get("criteria", {}),
             )
@@ -91,7 +91,7 @@ def chat_with_agent(req: ChatRequest):
                 event["farewell"], 
                 choice=event.get("choice"),
                 voice=req.voice,
-                participants=state.get("participants", []),
+                participants=[p for p in state.get("participants", []) if p],
                 votes=state.get("votes", {})
             )
 

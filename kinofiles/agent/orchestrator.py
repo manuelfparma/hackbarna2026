@@ -98,11 +98,8 @@ class OrquestratorAgent:
         return graph.compile(checkpointer=InMemorySaver())
 
     def welcome(self, state: State) -> Command:
-        msg = "Welcome to KinoFiles! Who's picking tonight?\nTell me everyone's names (1–4 people)."
-        if (state.get("result") or {}).get("kind") in {
-            "classification_error",
-            "clarification",
-        }:
+        msg = "Welcome to KinoFiles! What do you feel like watching? (If you're with friends, tell me their names too!)"
+        if (state.get('result') or {}).get('kind') in {'classification_error', 'clarification'}:
             msg = f"{state['response']}\n{msg}"
         extractor = self.reply_llm.with_structured_output(ParticipantsExtract)
 
@@ -122,7 +119,7 @@ class OrquestratorAgent:
             if len(names) == 0:
                 # No name detected at all: assume solo, and treat what they
                 # typed as their movie preference instead of discarding it.
-                person = "You"
+                person = ""
                 try:
                     classify_result = self.classifier.classify(text)
                 except ClassificationError:
@@ -161,7 +158,7 @@ class OrquestratorAgent:
             if len(names) <= 4:
                 confirmation = f"I detected {len(names)} people: {', '.join(names)}."
                 break
-            msg = "Please give between 1 and 4 names. Let's try again:"
+            msg = "That's a lot of people! Could you limit it to 4 names? Let's try again:"
 
         return Command(
             goto="collect_preferences",
@@ -211,7 +208,7 @@ class OrquestratorAgent:
             return Command(goto="mediate")
 
         person = names[idx]
-        msg = f"{person}, what are you in the mood for?"
+        msg = f"{person}, what are you in the mood for?" if person else "What are you in the mood for?"
         if (state.get("result") or {}).get("kind") == "classification_error":
             msg = f"{state['response']}\n{msg}"
         text = interrupt(prompt(msg, participant=person))
@@ -370,7 +367,7 @@ class OrquestratorAgent:
             return Command(goto="goodbye", update={"choice": winner})
 
         person = names[idx]
-        msg = f"{person}, which one speaks to you?"
+        msg = f"{person}, which one speaks to you?" if person else "Which one speaks to you?"
 
         ans = interrupt(prompt(msg, movies, participant=person)).strip()
 
