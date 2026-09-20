@@ -18,7 +18,7 @@ import json
 from datetime import datetime, timezone
 from pathlib import Path
 
-CONVERSATION = Path(__file__).resolve().parent / "test_files.json"
+CONVERSATION = Path(__file__).resolve().parent / "test_cases.json"
 RESULTS = Path(__file__).resolve().parent / "results"
 
 

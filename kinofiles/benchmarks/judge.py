@@ -21,11 +21,10 @@ JUDGE_PROMPT = """You are grading a movie recommendation.
 The user asked for: {asked}
 
 For each film below, answer each question with true or false, from your own
-knowledge of the film. Be strict: "Disney" means produced by Walt Disney
-Pictures, Disney Animation or Pixar — not Ghibli, DreamWorks, Warner or
-anyone else distributing through Disney. "Princess" means a princess (or a
-queen-to-be) is the central character. "Romantic ending" means the film ends
-with a romance resolved happily.
+knowledge of the film. Judge the film itself, not how it was marketed: a
+person named as a criterion has to actually be in it (or have directed it),
+a genre has to be what the film is rather than a scene it contains, and a
+subject has to be what the film is about.
 
 Films:
 {films}
@@ -33,11 +32,18 @@ Films:
 Reply with JSON only:
 {{"verdicts": [{{"title": "...", {keys}, "why": "<8 words max>"}}]}}"""
 
+# Definitions worth pinning down because a model left to itself is loose
+# about them. Anything not listed is asked about by name.
 CRITERION_QUESTIONS = {
-    "disney": "is it a Walt Disney / Pixar production?",
-    "princess": "is a princess the central character?",
+    "disney": "is it a Walt Disney Pictures / Disney Animation / Pixar production, not merely distributed by Disney?",
+    "princess": "is a princess (or a queen-to-be) the central character?",
     "romantic ending": "does it end with a romance resolved happily?",
 }
+
+
+def _question(name: str) -> str:
+    """How a criterion is put to the judge."""
+    return CRITERION_QUESTIONS.get(name, f'does the film match "{name}"?')
 
 
 class Judge:
@@ -50,7 +56,7 @@ class Judge:
         if not titles:
             return []
         keys = ", ".join(f'"{name}": true|false' for name in criteria)
-        asked = "; ".join(f"{name} ({CRITERION_QUESTIONS.get(name, name)})" for name in criteria)
+        asked = "; ".join(f"{name} ({_question(name)})" for name in criteria)
         prompt = JUDGE_PROMPT.format(
             asked=asked,
             films="\n".join(f"- {title}" for title in titles),
