@@ -104,9 +104,28 @@ class OrquestratorAgent:
                 raw_names = re.split(r',|\band\b', text)
                 names = [n.strip().title() for n in raw_names if n.strip()]
 
-            if len(names) <= 1:
-                # No more than one person detected: assume it's a solo session.
-                names = [names[0]] if names else ["You"]
+            if len(names) == 0:
+                # No name detected at all: assume solo, and treat what they
+                # typed as their movie preference instead of discarding it.
+                person = "You"
+                classify_result = self.classifier.classify(text)
+                entities = classify_result.entities.model_dump()
+                criteria = merge_criteria(
+                    empty_criteria(), entities, classify_result.criteria_action
+                )
+                return Command(
+                    goto="collect_preferences",
+                    update={
+                        "participants": [person],
+                        "current_participant": 1,
+                        "preferences": {person: [text]},
+                        "per_person_criteria": {person: criteria},
+                        "history": [],
+                        "round": 1,
+                        "response": "Got it, just you tonight.",
+                    }
+                )
+            if len(names) == 1:
                 confirmation = f"Got it, just you ({names[0]}) tonight."
                 break
             if len(names) <= 4:
