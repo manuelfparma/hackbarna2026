@@ -1,0 +1,561 @@
+{
+  "started_at": "2026-09-20T09:48:00+00:00",
+  "conversation": "test_cases.json",
+  "questions": [
+    "Comedy with Jim Carrey",
+    "with action",
+    "nevermind, a film about a rat in Paris"
+  ],
+  "turns": [
+    {
+      "question": "Comedy with Jim Carrey",
+      "criteria": [
+        "comedy",
+        "Jim Carrey"
+      ]
+    },
+    {
+      "question": "with action",
+      "criteria": [
+        "comedy",
+        "Jim Carrey",
+        "action"
+      ]
+    },
+    {
+      "question": "nevermind, a film about a rat in Paris",
+      "criteria": [
+        "rat",
+        "Paris"
+      ]
+    }
+  ],
+  "systems": [
+    "agent",
+    "catalog_prompt"
+  ],
+  "agent_llm": "mistral",
+  "results": {
+    "agent": {
+      "turns": [
+        {
+          "question": "Comedy with Jim Carrey",
+          "titles": [
+            "How the Grinch Stole Christmas",
+            "Bruce Almighty",
+            "Sonic the Hedgehog"
+          ],
+          "error": null,
+          "seconds": 1.671,
+          "prompt_tokens": 3525,
+          "completion_tokens": 121,
+          "total_tokens": 3646,
+          "llm_calls": 2,
+          "llm_errors": 0,
+          "embedding_calls": 0,
+          "embedded_characters": 0
+        },
+        {
+          "question": "with action",
+          "titles": [
+            "Sonic the Hedgehog"
+          ],
+          "error": null,
+          "seconds": 1.312,
+          "prompt_tokens": 3391,
+          "completion_tokens": 88,
+          "total_tokens": 3479,
+          "llm_calls": 2,
+          "llm_errors": 0,
+          "embedding_calls": 0,
+          "embedded_characters": 0
+        },
+        {
+          "question": "nevermind, a film about a rat in Paris",
+          "titles": [
+            "Ratatouille",
+            "Midnight in Paris",
+            "The Dreamers",
+            "The Secret Life of Walter Mitty",
+            "Amélie",
+            "Limitless",
+            "As Above, So Below",
+            "Lost in Translation"
+          ],
+          "error": null,
+          "seconds": 2.668,
+          "prompt_tokens": 3948,
+          "completion_tokens": 95,
+          "total_tokens": 4043,
+          "llm_calls": 2,
+          "llm_errors": 0,
+          "embedding_calls": 2,
+          "embedded_characters": 204
+        }
+      ],
+      "setup": {
+        "seconds": 0.694,
+        "prompt_tokens": 95,
+        "completion_tokens": 12,
+        "total_tokens": 107,
+        "llm_calls": 1,
+        "llm_errors": 0,
+        "embedding_calls": 0,
+        "embedded_characters": 0
+      },
+      "total": {
+        "seconds": 6.34,
+        "total_tokens": 11275,
+        "prompt_tokens": 10959,
+        "completion_tokens": 316,
+        "llm_calls": 7,
+        "llm_errors": 0,
+        "embedding_calls": 2
+      },
+      "graded": [
+        [
+          {
+            "title": "How the Grinch Stole Christmas",
+            "comedy": true,
+            "Jim Carrey": true,
+            "all": true,
+            "why": "Jim Carrey played Grinch",
+            "judged": true
+          },
+          {
+            "title": "Bruce Almighty",
+            "comedy": true,
+            "Jim Carrey": true,
+            "all": true,
+            "why": "Jim Carrey starred",
+            "judged": true
+          },
+          {
+            "title": "Sonic the Hedgehog",
+            "comedy": true,
+            "Jim Carrey": false,
+            "all": false,
+            "why": "Not Jim Carrey",
+            "judged": true
+          }
+        ],
+        [
+          {
+            "title": "Sonic the Hedgehog",
+            "comedy": true,
+            "Jim Carrey": true,
+            "action": true,
+            "all": true,
+            "why": "Balances humor, Carrey's role, and action",
+            "judged": true
+          }
+        ],
+        [
+          {
+            "title": "Ratatouille",
+            "rat": true,
+            "Paris": true,
+            "all": true,
+            "why": "Rat protagonist in Paris",
+            "judged": true
+          },
+          {
+            "title": "Midnight in Paris",
+            "rat": false,
+            "Paris": true,
+            "all": false,
+            "why": "Paris setting",
+            "judged": true
+          },
+          {
+            "title": "The Dreamers",
+            "rat": false,
+            "Paris": true,
+            "all": false,
+            "why": "Paris setting",
+            "judged": true
+          },
+          {
+            "title": "The Secret Life of Walter Mitty",
+            "rat": false,
+            "Paris": false,
+            "all": false,
+            "why": "No rat, no Paris",
+            "judged": true
+          },
+          {
+            "title": "Amélie",
+            "rat": false,
+            "Paris": true,
+            "all": false,
+            "why": "Paris setting",
+            "judged": true
+          },
+          {
+            "title": "Limitless",
+            "rat": false,
+            "Paris": false,
+            "all": false,
+            "why": "No rat, no Paris",
+            "judged": true
+          },
+          {
+            "title": "As Above, So Below",
+            "rat": false,
+            "Paris": false,
+            "all": false,
+            "why": "No rat, no Paris",
+            "judged": true
+          },
+          {
+            "title": "Lost in Translation",
+            "rat": false,
+            "Paris": false,
+            "all": false,
+            "why": "No rat, no Paris",
+            "judged": true
+          }
+        ]
+      ],
+      "scores": [
+        {
+          "comedy": 3,
+          "Jim Carrey": 2,
+          "all": 2,
+          "n": 3
+        },
+        {
+          "comedy": 1,
+          "Jim Carrey": 1,
+          "action": 1,
+          "all": 1,
+          "n": 1
+        },
+        {
+          "rat": 1,
+          "Paris": 4,
+          "all": 1,
+          "n": 8
+        }
+      ]
+    },
+    "catalog_prompt": {
+      "turns": [
+        {
+          "question": "Comedy with Jim Carrey",
+          "titles": [
+            "The Mask",
+            "Liar Liar",
+            "Bruce Almighty",
+            "The Truman Show",
+            "Eternal Sunshine of the Spotless Mind",
+            "Man on the Moon",
+            "The Cable Guy",
+            "Dumb and Dumber"
+          ],
+          "error": null,
+          "seconds": 2.453,
+          "prompt_tokens": 16713,
+          "completion_tokens": 71,
+          "total_tokens": 16784,
+          "llm_calls": 1,
+          "llm_errors": 0,
+          "embedding_calls": 0,
+          "embedded_characters": 0
+        },
+        {
+          "question": "with action",
+          "titles": [
+            "The Mask",
+            "Bruce Almighty",
+            "Man on the Moon",
+            "Liar Liar",
+            "Dumb and Dumber",
+            "The Truman Show",
+            "Eternal Sunshine of the Spotless Mind",
+            "The Cable Guy"
+          ],
+          "error": null,
+          "seconds": 1.342,
+          "prompt_tokens": 16757,
+          "completion_tokens": 69,
+          "total_tokens": 16826,
+          "llm_calls": 1,
+          "llm_errors": 0,
+          "embedding_calls": 0,
+          "embedded_characters": 0
+        },
+        {
+          "question": "nevermind, a film about a rat in Paris",
+          "titles": [
+            "Ratatouille",
+            "The Rat Race",
+            "Ratatouille",
+            "Ratatouille: The Animated Series",
+            "Ratatouille: The Animated Series",
+            "Ratatouille: The Animated Series",
+            "Ratatouille: The Animated Series",
+            "Ratatouille: The Animated Series"
+          ],
+          "error": null,
+          "seconds": 2.0,
+          "prompt_tokens": 16813,
+          "completion_tokens": 149,
+          "total_tokens": 16962,
+          "llm_calls": 1,
+          "llm_errors": 0,
+          "embedding_calls": 0,
+          "embedded_characters": 0
+        }
+      ],
+      "setup": {
+        "seconds": 0.0,
+        "prompt_tokens": 0,
+        "completion_tokens": 0,
+        "total_tokens": 0,
+        "llm_calls": 0,
+        "llm_errors": 0,
+        "embedding_calls": 0,
+        "embedded_characters": 0
+      },
+      "total": {
+        "seconds": 5.79,
+        "total_tokens": 50572,
+        "prompt_tokens": 50283,
+        "completion_tokens": 289,
+        "llm_calls": 3,
+        "llm_errors": 0,
+        "embedding_calls": 0
+      },
+      "graded": [
+        [
+          {
+            "title": "The Mask",
+            "comedy": true,
+            "Jim Carrey": true,
+            "all": true,
+            "why": "Slapstick, surreal humor",
+            "judged": true
+          },
+          {
+            "title": "Liar Liar",
+            "comedy": true,
+            "Jim Carrey": true,
+            "all": true,
+            "why": "Farce, satire",
+            "judged": true
+          },
+          {
+            "title": "Bruce Almighty",
+            "comedy": true,
+            "Jim Carrey": true,
+            "all": true,
+            "why": "Divine comedy, satire",
+            "judged": true
+          },
+          {
+            "title": "The Truman Show",
+            "comedy": false,
+            "Jim Carrey": true,
+            "all": false,
+            "why": "Drama, philosophical",
+            "judged": true
+          },
+          {
+            "title": "Eternal Sunshine of the Spotless Mind",
+            "comedy": false,
+            "Jim Carrey": true,
+            "all": false,
+            "why": "Romantic drama, melancholy",
+            "judged": true
+          },
+          {
+            "title": "Man on the Moon",
+            "comedy": false,
+            "Jim Carrey": true,
+            "all": false,
+            "why": "Biopic, dark drama",
+            "judged": true
+          },
+          {
+            "title": "The Cable Guy",
+            "comedy": true,
+            "Jim Carrey": true,
+            "all": true,
+            "why": "Absurdist, dark comedy",
+            "judged": true
+          },
+          {
+            "title": "Dumb and Dumber",
+            "comedy": true,
+            "Jim Carrey": true,
+            "all": true,
+            "why": "Slapstick, absurd humor",
+            "judged": true
+          }
+        ],
+        [
+          {
+            "title": "The Mask",
+            "comedy": true,
+            "Jim Carrey": true,
+            "action": true,
+            "all": true,
+            "why": "Exaggerated antics",
+            "judged": true
+          },
+          {
+            "title": "Bruce Almighty",
+            "comedy": true,
+            "Jim Carrey": true,
+            "action": false,
+            "all": false,
+            "why": "Divine humor",
+            "judged": true
+          },
+          {
+            "title": "Man on the Moon",
+            "comedy": true,
+            "Jim Carrey": true,
+            "action": false,
+            "all": false,
+            "why": "Biopic satire",
+            "judged": true
+          },
+          {
+            "title": "Liar Liar",
+            "comedy": true,
+            "Jim Carrey": true,
+            "action": false,
+            "all": false,
+            "why": "Comedic premise",
+            "judged": true
+          },
+          {
+            "title": "Dumb and Dumber",
+            "comedy": true,
+            "Jim Carrey": true,
+            "action": false,
+            "all": false,
+            "why": "Slapstick humor",
+            "judged": true
+          },
+          {
+            "title": "The Truman Show",
+            "comedy": false,
+            "Jim Carrey": true,
+            "action": false,
+            "all": false,
+            "why": "Drama with satire",
+            "judged": true
+          },
+          {
+            "title": "Eternal Sunshine of the Spotless Mind",
+            "comedy": false,
+            "Jim Carrey": true,
+            "action": false,
+            "all": false,
+            "why": "Romantic drama",
+            "judged": true
+          },
+          {
+            "title": "The Cable Guy",
+            "comedy": true,
+            "Jim Carrey": true,
+            "action": false,
+            "all": false,
+            "why": "Dark comedy",
+            "judged": true
+          }
+        ],
+        [
+          {
+            "title": "Ratatouille",
+            "rat": true,
+            "Paris": true,
+            "all": true,
+            "why": "Chef rat in Paris",
+            "judged": true
+          },
+          {
+            "title": "The Rat Race",
+            "rat": false,
+            "Paris": false,
+            "all": false,
+            "why": "No rat, no Paris",
+            "judged": true
+          },
+          {
+            "title": "Ratatouille",
+            "rat": true,
+            "Paris": true,
+            "all": true,
+            "why": "Chef rat in Paris",
+            "judged": true
+          },
+          {
+            "title": "Ratatouille: The Animated Series",
+            "rat": true,
+            "Paris": true,
+            "all": true,
+            "why": "Chef rat in Paris",
+            "judged": true
+          },
+          {
+            "title": "Ratatouille: The Animated Series",
+            "rat": true,
+            "Paris": true,
+            "all": true,
+            "why": "Chef rat in Paris",
+            "judged": true
+          },
+          {
+            "title": "Ratatouille: The Animated Series",
+            "rat": true,
+            "Paris": true,
+            "all": true,
+            "why": "Chef rat in Paris",
+            "judged": true
+          },
+          {
+            "title": "Ratatouille: The Animated Series",
+            "rat": true,
+            "Paris": true,
+            "all": true,
+            "why": "Chef rat in Paris",
+            "judged": true
+          },
+          {
+            "title": "Ratatouille: The Animated Series",
+            "rat": true,
+            "Paris": true,
+            "all": true,
+            "why": "Chef rat in Paris",
+            "judged": true
+          }
+        ]
+      ],
+      "scores": [
+        {
+          "comedy": 5,
+          "Jim Carrey": 8,
+          "all": 5,
+          "n": 8
+        },
+        {
+          "comedy": 6,
+          "Jim Carrey": 8,
+          "action": 1,
+          "all": 1,
+          "n": 8
+        },
+        {
+          "rat": 7,
+          "Paris": 7,
+          "all": 7,
+          "n": 8
+        }
+      ]
+    }
+  }
+}

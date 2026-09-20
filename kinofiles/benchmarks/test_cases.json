@@ -1,0 +1,89 @@
+[
+  {
+    "question": "Comedy with Jim Carrey",
+    "criteria": [
+      "comedy",
+      "Jim Carrey"
+    ],
+    "query": "comedy; Jim Carrey",
+    "matched_themes": [],
+    "response": [
+      "The Mask",
+      "Ace Ventura: Pet Detective",
+      "Liar Liar",
+      "Bruce Almighty",
+      "Dumb and Dumber",
+      "Yes Man",
+      "Me, Myself & Irene",
+      "The Truman Show"
+    ]
+  },
+  {
+    "question": "with action",
+    "criteria": [
+      "comedy",
+      "Jim Carrey",
+      "action"
+    ],
+    "query": "action; comedy; Jim Carrey",
+    "matched_themes": [
+      [
+        "Action comedy and adventure",
+        0.82
+      ],
+      [
+        "Physical comedy and slapstick",
+        0.78
+      ],
+      [
+        "Fantasy adventure and supernatural comedy",
+        0.74
+      ],
+      [
+        "Crime, action, and comedy",
+        0.71
+      ],
+      [
+        "Fast-paced adventure",
+        0.68
+      ]
+    ],
+    "response": [
+      "The Mask",
+      "Ace Ventura: When Nature Calls",
+      "Sonic the Hedgehog",
+      "Sonic the Hedgehog 2",
+      "Kick-Ass 2",
+      "Lemony Snicket's A Series of Unfortunate Events"
+    ]
+  },
+  {
+    "question": "nevermind, a film about a rat in Paris",
+    "criteria": [
+      "rat",
+      "Paris"
+    ],
+    "query": "rat; Paris",
+    "matched_themes": [
+      [
+        "Food and cooking",
+        0.89
+      ],
+      [
+        "Parisian life and culture",
+        0.84
+      ],
+      [
+        "Animated family adventure",
+        0.81
+      ],
+      [
+        "Friendship and unlikely relationships",
+        0.76
+      ]
+    ],
+    "response": [
+      "Ratatouille"
+    ]
+  }
+]
