@@ -363,12 +363,14 @@ class OrquestratorAgent:
 
         person = names[idx]
         msg = f"{person}, what are you in the mood for?" if person else "What are you in the mood for?"
+        prefix = state.get("response", "") if idx == 0 else ""
         if (state.get("result") or {}).get("kind") in {
             "classification_error",
             "criteria_changed",
         }:
-            msg = f"{state['response']}\n{msg}"
-        text = interrupt(prompt(msg, participant=person))
+            prefix = state.get("response", "")
+            
+        text = interrupt(prompt(msg, participant=person, explanation=prefix))
 
         control = parse_criteria_command(text)
         if control:
@@ -527,8 +529,9 @@ class OrquestratorAgent:
 
         person = names[idx]
         msg = f"{person}, which one speaks to you?" if person else "Which one speaks to you?"
+        explanation = state.get("response", "") if idx == 0 else ""
 
-        ans = interrupt(prompt(msg, movies, participant=person)).strip()
+        ans = interrupt(prompt(msg, movies, participant=person, explanation=explanation)).strip()
 
         control = parse_criteria_command(ans)
         if control:
@@ -564,8 +567,9 @@ class OrquestratorAgent:
         ans = state.get("inline_feedback", "")
         if not ans:
             msg = "What else are you looking for?"
+            explanation = state.get("response", "")
             movies = state.get("movies", [])
-            ans = interrupt(prompt(msg, options=movies))
+            ans = interrupt(prompt(msg, options=movies, explanation=explanation))
 
         control = parse_criteria_command(ans)
         if control:

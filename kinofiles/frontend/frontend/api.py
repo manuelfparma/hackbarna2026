@@ -39,12 +39,16 @@ def _reply(status: str, text: str, options: list[str] | None = None, voice: str 
     whole turn.
     """
     payload = {"status": status, "reply": text, "options": options or [], **extra}
-    if text.strip():
+    
+    explanation = extra.get("explanation", "")
+    spoken_text = f"{explanation}\n\n{text}".strip()
+    
+    if spoken_text:
         try:
             if voice:
-                payload["audio"] = base64.b64encode(tts.synthesize(text, voice=voice)).decode()
+                payload["audio"] = base64.b64encode(tts.synthesize(spoken_text, voice=voice)).decode()
             else:
-                payload["audio"] = base64.b64encode(tts.synthesize(text)).decode()
+                payload["audio"] = base64.b64encode(tts.synthesize(spoken_text)).decode()
         except Exception:
             payload["audio"] = None
     return payload
@@ -82,6 +86,7 @@ def chat_with_agent(req: ChatRequest):
                 participants=[p for p in participants if p],
                 votes=votes,
                 criteria=pending.get("criteria", {}),
+                explanation=pending.get("explanation", ""),
             )
 
         if "farewell" in event:
