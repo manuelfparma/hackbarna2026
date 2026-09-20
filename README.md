@@ -1,4 +1,4 @@
-# <img src="kinofiles/frontend/assets/favicon.ico" width="32" height="32" align="center" /> Kino Files: HackBarna 2026 Submission
+# <img src="kinofiles/frontend/assets/kinofiles-mark.svg" height="25" /> Kino Files: HackBarna 2026 Submission
 
 **Find your next favorite film with Kino Files, a conversational agent that listens to your group preferences and filters a real movie catalog to deliver reliable, personalized recommendations.**
 
