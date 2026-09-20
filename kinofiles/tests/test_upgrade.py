@@ -4,7 +4,11 @@ from unittest.mock import Mock, patch
 from types import SimpleNamespace
 
 from langgraph.types import Command
-from agent.nodes.classifier import Classification, Classifier
+from agent.nodes.classifier import (
+    Classification,
+    Classifier,
+    spoken_numbers_to_digits,
+)
 from agent.nodes.criteria import normalize_criteria, merge_criteria, has_catalog_filters
 from agent.nodes.filters import apply_filters, matches_filters
 from agent.nodes.description_search import search_descriptions
@@ -102,6 +106,69 @@ class CriteriaUpgradeTests(unittest.TestCase):
         llm = LLM(Classification(intent="direct_request", entities={"years": [2015]}))
         self.assertEqual(
             Classifier(llm).classify("A movie from 2015").entities.years, [2015]
+        )
+
+    def test_dictated_year_and_bare_runtime_become_year_and_lower_bound(self):
+        llm = LLM(
+            Classification(
+                intent="direct_request",
+                entities={"actors": ["Josh Brolin"], "minute_max": 180},
+            )
+        )
+        result = Classifier(llm).classify(
+            "I would like a movie that is from the twenty fifteen. "
+            "It's three hours of duration and stars Josh Brolin"
+        )
+        self.assertEqual(result.entities.years, [2015])
+        self.assertEqual(result.entities.minute_min, 180)
+        self.assertIsNone(result.entities.minute_max)
+        self.assertEqual(result.entities.actors, ["Josh Brolin"])
+
+    def test_spoken_year_forms_convert_without_swallowing_counts(self):
+        self.assertEqual(
+            spoken_numbers_to_digits("a movie from nineteen ninety nine"),
+            "a movie from 1999",
+        )
+        self.assertEqual(
+            spoken_numbers_to_digits("something from two thousand ten"),
+            "something from 2010",
+        )
+        self.assertEqual(
+            spoken_numbers_to_digits("twenty twenty four comedies"),
+            "2024 comedies",
+        )
+        self.assertEqual(
+            spoken_numbers_to_digits("ninety minutes of comedy"),
+            "90 minutes of comedy",
+        )
+        self.assertEqual(
+            spoken_numbers_to_digits("I'm here with twenty five friends"),
+            "I'm here with twenty five friends",
+        )
+
+    def test_explicit_runtime_ceilings_are_left_alone(self):
+        for request, expected in (
+            ("A comedy under two hours", ("minute_max", 119)),
+            ("A comedy of at most 100 minutes", ("minute_max", 100)),
+        ):
+            with self.subTest(request=request):
+                field, value = expected
+                llm = LLM(
+                    Classification(
+                        intent="direct_request", entities={field: value}
+                    )
+                )
+                entities = Classifier(llm).classify(request).entities
+                self.assertEqual(getattr(entities, field), value)
+                self.assertIsNone(entities.minute_min)
+
+    def test_bare_duration_text_is_a_minimum(self):
+        self.assertEqual(
+            normalize_criteria({"duration": ["3 hours"]})["minute_min"], 180
+        )
+        self.assertIsNone(normalize_criteria({"duration": ["3 hours"]})["minute_max"])
+        self.assertEqual(
+            normalize_criteria({"duration": ["90 minutes long"]})["minute_min"], 90
         )
 
     def test_not_seen_does_not_create_seen_exclusion(self):
