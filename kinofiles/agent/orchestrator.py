@@ -99,7 +99,10 @@ class OrquestratorAgent:
 
     def welcome(self, state: State) -> Command:
         msg = "Welcome to KinoFiles! Who's picking tonight?\nTell me everyone's names (1–4 people)."
-        if (state.get('result') or {}).get('kind') in {'classification_error', 'clarification'}:
+        if (state.get("result") or {}).get("kind") in {
+            "classification_error",
+            "clarification",
+        }:
             msg = f"{state['response']}\n{msg}"
         extractor = self.reply_llm.with_structured_output(ParticipantsExtract)
 
@@ -123,12 +126,21 @@ class OrquestratorAgent:
                 try:
                     classify_result = self.classifier.classify(text)
                 except ClassificationError:
-                    return self._classification_failure('welcome')
-                if classify_result.intent not in {'recommendation', 'theme_recommendation', 'direct_request', 'prefer', 'feedback'}:
+                    return self._classification_failure("welcome")
+                if classify_result.intent not in {
+                    "recommendation",
+                    "theme_recommendation",
+                    "direct_request",
+                    "prefer",
+                    "feedback",
+                }:
                     return self._welcome_clarification()
                 entities = classify_result.entities.model_dump()
                 criteria = merge_criteria(
-                    empty_criteria(), entities, classify_result.criteria_action, classify_result.clear_fields
+                    empty_criteria(),
+                    entities,
+                    classify_result.criteria_action,
+                    classify_result.clear_fields,
                 )
                 return Command(
                     goto="collect_preferences",
@@ -141,7 +153,7 @@ class OrquestratorAgent:
                         "round": 1,
                         "response": "Got it, just you tonight.",
                         "result": {},
-                    }
+                    },
                 )
             if len(names) == 1:
                 confirmation = f"Got it, just you ({names[0]}) tonight."
@@ -168,8 +180,13 @@ class OrquestratorAgent:
     @staticmethod
     def _welcome_clarification():
         message = "Please give the participants' names or a movie preference to start."
-        return Command(goto='welcome', update={'response': message,
-                       'result': {'kind': 'clarification', 'titles': [], 'error': None}})
+        return Command(
+            goto="welcome",
+            update={
+                "response": message,
+                "result": {"kind": "clarification", "titles": [], "error": None},
+            },
+        )
 
     @staticmethod
     def _classification_failure(stage):
@@ -240,14 +257,14 @@ class OrquestratorAgent:
             # Rounds 2+ carry the accumulated group criteria; the per-person
             # criteria are never re-consulted after the first merge.
             merge_source = "carried"
-        
+
         # Flatten feedback from all people
         all_feedback = list(state.get("group_feedback", []))
         for p in state["participants"]:
             all_feedback.extend(state["preferences"][p])
 
         req = "; ".join(all_feedback) if all_feedback else "recommend something"
-        
+
         for person in state["participants"]:
             logger.info(
                 "mediate | round=%s | input | %s=%s",
@@ -263,7 +280,7 @@ class OrquestratorAgent:
             notes,
         )
         logger.info("mediate | round=%s | merged_query=%r", round_no, req)
-        
+
         if has_catalog_filters(merged) and not merged.get("themes"):
             # They want a specific director/actor/etc without mood qualifiers
             route = "direct_request"
@@ -282,7 +299,7 @@ class OrquestratorAgent:
             movies,
             result.get("error"),
         )
-        
+
         # Compose response
         response = self.reply_composer.compose(
             request="mediate",

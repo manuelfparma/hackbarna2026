@@ -211,7 +211,10 @@ class ThemeRecommender:
         if genres:
             # Array containment: a movie must carry EVERY listed genre.
             logger.info("theme_search | genres @> %s (AND)", genres)
-        logger.info("theme_search | criteria=%s", {key: value for key, value in normalized_criteria.items() if value})
+        logger.info(
+            "theme_search | criteria=%s",
+            {key: value for key, value in normalized_criteria.items() if value},
+        )
         try:
             movie_query = apply_filters(
                 supabase.table("movies").select("name, rating, themes, description"),

@@ -71,46 +71,78 @@ class CapabilityTests(unittest.TestCase):
     def test_theme_logging_does_not_duplicate_embedding_calls(self):
         recommender = ThemeRecommender()
         recommender._supabase = FakeSupabase(
-            [{'theme': 'Heists', 'similarity': 0.8}],
-            [{'name': 'Drive', 'rating': 4.0, 'themes': ['Heists'], 'description': 'A getaway driver.'}],
+            [{"theme": "Heists", "similarity": 0.8}],
+            [
+                {
+                    "name": "Drive",
+                    "rating": 4.0,
+                    "themes": ["Heists"],
+                    "description": "A getaway driver.",
+                }
+            ],
         )
         recommender._embeddings = FakeEmbeddings()
-        with self.assertLogs('agent.nodes.theme_recommender', level='INFO') as logs:
-            result = recommender.recommend('heist', criteria={'genres': ['Crime']}, search_mode='theme')
+        with self.assertLogs("agent.nodes.theme_recommender", level="INFO") as logs:
+            result = recommender.recommend(
+                "heist", criteria={"genres": ["Crime"]}, search_mode="theme"
+            )
         self.assertEqual(len(recommender._embeddings.queries), 1)
-        self.assertEqual(recommender._supabase.contains_calls, [('genres', ['Crime'])])
-        self.assertEqual(result['descriptions'], {'Drive': 'A getaway driver.'})
-        self.assertIn('embedded_query=', str(logs.output))
-        self.assertIn('matched_themes=', str(logs.output))
+        self.assertEqual(recommender._supabase.contains_calls, [("genres", ["Crime"])])
+        self.assertEqual(result["descriptions"], {"Drive": "A getaway driver."})
+        self.assertIn("embedded_query=", str(logs.output))
+        self.assertIn("matched_themes=", str(logs.output))
 
     def test_embedding_failure_stays_inside_error_boundary(self):
         recommender = ThemeRecommender()
         recommender._supabase, recommender._embeddings = Mock(), Mock()
-        recommender._embeddings.embed_query.side_effect = RuntimeError('offline')
-        result = recommender.recommend('heist', search_mode='theme')
-        self.assertEqual(result['titles'], [])
-        self.assertTrue(result['error'])
+        recommender._embeddings.embed_query.side_effect = RuntimeError("offline")
+        result = recommender.recommend("heist", search_mode="theme")
+        self.assertEqual(result["titles"], [])
+        self.assertTrue(result["error"])
         recommender._embeddings.embed_query.assert_called_once()
         recommender._supabase.rpc.assert_not_called()
 
     def test_shared_description_filter_logs_counts_and_keeps_all_constraints(self):
         db, embeddings = Mock(), Mock()
         db.rpc.return_value.execute.return_value.data = [
-            {'movie_id': 1, 'name': 'Seed', 'similarity': 1.0},
-            {'movie_id': 2, 'name': 'Seen', 'similarity': 0.95},
-            {'movie_id': 3, 'name': 'Too long', 'similarity': 0.9},
-            {'movie_id': 4, 'name': 'Eligible', 'similarity': 0.8},
+            {"movie_id": 1, "name": "Seed", "similarity": 1.0},
+            {"movie_id": 2, "name": "Seen", "similarity": 0.95},
+            {"movie_id": 3, "name": "Too long", "similarity": 0.9},
+            {"movie_id": 4, "name": "Eligible", "similarity": 0.8},
         ]
         db.table.return_value.select.return_value.in_.return_value.execute.return_value.data = [
-            {'id': 3, 'genres': ['Comedy'], 'minute': 150, 'date': 2020, 'streaming': ['netflix']},
-            {'id': 4, 'genres': ['Comedy'], 'minute': 90, 'date': 2020, 'streaming': ['netflix']},
+            {
+                "id": 3,
+                "genres": ["Comedy"],
+                "minute": 150,
+                "date": 2020,
+                "streaming": ["netflix"],
+            },
+            {
+                "id": 4,
+                "genres": ["Comedy"],
+                "minute": 90,
+                "date": 2020,
+                "streaming": ["netflix"],
+            },
         ]
-        with self.assertLogs('agent.nodes.description_search', level='INFO') as logs:
-            matches = search_descriptions(db, embeddings, 'a funny story', exclude_ids=[1], exclude_names=['Seen'],
-                criteria={'genres': ['Comedy'], 'minute_max': 100, 'years': [2020], 'streaming': ['netflix']})
-        self.assertEqual([row['name'] for row in matches], ['Eligible'])
-        self.assertIn('kept=1/4', str(logs.output))
-        self.assertIn('minute_max', str(logs.output))
+        with self.assertLogs("agent.nodes.description_search", level="INFO") as logs:
+            matches = search_descriptions(
+                db,
+                embeddings,
+                "a funny story",
+                exclude_ids=[1],
+                exclude_names=["Seen"],
+                criteria={
+                    "genres": ["Comedy"],
+                    "minute_max": 100,
+                    "years": [2020],
+                    "streaming": ["netflix"],
+                },
+            )
+        self.assertEqual([row["name"] for row in matches], ["Eligible"])
+        self.assertIn("kept=1/4", str(logs.output))
+        self.assertIn("minute_max", str(logs.output))
         embeddings.embed_query.assert_called_once()
         db.rpc.assert_called_once()
 

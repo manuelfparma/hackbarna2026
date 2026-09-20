@@ -14,7 +14,7 @@ from tests.test_upgrade import LLM
 class GroupReplyLLM(LLM):
     def __init__(self, names=None):
         super().__init__()
-        self.names = ['Alice', 'Bob'] if names is None else names
+        self.names = ["Alice", "Bob"] if names is None else names
 
     def with_structured_output(self, schema):
         return Mock(invoke=Mock(return_value=SimpleNamespace(names=self.names)))
@@ -43,60 +43,79 @@ def make_group(*classifications, names=None):
 
 class GroupIntegrationTests(unittest.TestCase):
     def test_unnamed_movie_request_starts_one_person_group_without_losing_request(self):
-        agent = make_group(Classification(intent='direct_request', entities={'genres': ['Comedy'], 'minute_max': 90}), names=[])
-        config = {'configurable': {'thread_id': 'unnamed-solo'}}
+        agent = make_group(
+            Classification(
+                intent="direct_request",
+                entities={"genres": ["Comedy"], "minute_max": 90},
+            ),
+            names=[],
+        )
+        config = {"configurable": {"thread_id": "unnamed-solo"}}
         agent.graph.invoke({}, config)
-        event = agent.graph.invoke(Command(resume='Any comedy under 91 minutes?'), config)
+        event = agent.graph.invoke(
+            Command(resume="Any comedy under 91 minutes?"), config
+        )
         state = agent.graph.get_state(config).values
-        self.assertEqual(state['participants'], ['You'])
-        self.assertEqual(state['preferences']['You'], ['Any comedy under 91 minutes?'])
-        self.assertEqual(state['per_person_criteria']['You']['minute_max'], 90)
-        self.assertEqual(event['__interrupt__'][0].value['participant'], 'You')
-        self.assertEqual(event['__interrupt__'][0].value['options'], ['First movie', 'Second movie'])
-        result = agent.graph.invoke(Command(resume='1'), config)
-        self.assertEqual(result['choice'], 'First movie')
-        self.assertEqual(result['votes'], {'You': 'First movie'})
+        self.assertEqual(state["participants"], ["You"])
+        self.assertEqual(state["preferences"]["You"], ["Any comedy under 91 minutes?"])
+        self.assertEqual(state["per_person_criteria"]["You"]["minute_max"], 90)
+        self.assertEqual(event["__interrupt__"][0].value["participant"], "You")
+        self.assertEqual(
+            event["__interrupt__"][0].value["options"], ["First movie", "Second movie"]
+        )
+        result = agent.graph.invoke(Command(resume="1"), config)
+        self.assertEqual(result["choice"], "First movie")
+        self.assertEqual(result["votes"], {"You": "First movie"})
 
     def test_named_solo_still_collects_preferences(self):
-        agent = make_group(names=['Alice'])
-        config = {'configurable': {'thread_id': 'named-solo'}}
+        agent = make_group(names=["Alice"])
+        config = {"configurable": {"thread_id": "named-solo"}}
         agent.graph.invoke({}, config)
-        event = agent.graph.invoke(Command(resume='Alice'), config)
-        self.assertEqual(event['__interrupt__'][0].value['participant'], 'Alice')
-        self.assertEqual(event['__interrupt__'][0].value['options'], [])
+        event = agent.graph.invoke(Command(resume="Alice"), config)
+        self.assertEqual(event["__interrupt__"][0].value["participant"], "Alice")
+        self.assertEqual(event["__interrupt__"][0].value["options"], [])
         agent.direct_request_handler.handle.assert_not_called()
 
     def test_unnamed_solo_classifier_failure_retries_welcome(self):
         agent = make_group(names=[])
-        agent.classifier.llm.invoke = Mock(side_effect=[RuntimeError('offline'), Classification(intent='direct_request', entities={'genres': ['Comedy']})])
-        config = {'configurable': {'thread_id': 'solo-retry'}}
+        agent.classifier.llm.invoke = Mock(
+            side_effect=[
+                RuntimeError("offline"),
+                Classification(
+                    intent="direct_request", entities={"genres": ["Comedy"]}
+                ),
+            ]
+        )
+        config = {"configurable": {"thread_id": "solo-retry"}}
         agent.graph.invoke({}, config)
-        with self.assertLogs('agent.nodes.classifier', level='ERROR'):
-            event = agent.graph.invoke(Command(resume='Any comedy?'), config)
-        self.assertIn('try again', event['__interrupt__'][0].value['text'].lower())
-        self.assertNotIn('participants', agent.graph.get_state(config).values)
+        with self.assertLogs("agent.nodes.classifier", level="ERROR"):
+            event = agent.graph.invoke(Command(resume="Any comedy?"), config)
+        self.assertIn("try again", event["__interrupt__"][0].value["text"].lower())
+        self.assertNotIn("participants", agent.graph.get_state(config).values)
         agent.direct_request_handler.handle.assert_not_called()
-        event = agent.graph.invoke(Command(resume='Any comedy?'), config)
-        self.assertEqual(event['__interrupt__'][0].value['participant'], 'You')
-        self.assertEqual(agent.graph.get_state(config).values['result']['kind'], 'direct_request')
+        event = agent.graph.invoke(Command(resume="Any comedy?"), config)
+        self.assertEqual(event["__interrupt__"][0].value["participant"], "You")
+        self.assertEqual(
+            agent.graph.get_state(config).values["result"]["kind"], "direct_request"
+        )
 
     def test_no_names_without_movie_request_asks_for_clarification(self):
-        agent = make_group(Classification(intent='social'), names=[])
-        config = {'configurable': {'thread_id': 'no-name-greeting'}}
+        agent = make_group(Classification(intent="social"), names=[])
+        config = {"configurable": {"thread_id": "no-name-greeting"}}
         agent.graph.invoke({}, config)
-        event = agent.graph.invoke(Command(resume='Hello'), config)
-        self.assertIn('names', event['__interrupt__'][0].value['text'].lower())
-        self.assertNotIn('participants', agent.graph.get_state(config).values)
+        event = agent.graph.invoke(Command(resume="Hello"), config)
+        self.assertIn("names", event["__interrupt__"][0].value["text"].lower())
+        self.assertNotIn("participants", agent.graph.get_state(config).values)
         agent.direct_request_handler.handle.assert_not_called()
         agent.theme_recommender.recommend.assert_not_called()
 
     def test_blank_welcome_does_not_call_classifier_or_start_group(self):
         agent = make_group(names=[])
-        config = {'configurable': {'thread_id': 'blank-welcome'}}
+        config = {"configurable": {"thread_id": "blank-welcome"}}
         agent.graph.invoke({}, config)
-        event = agent.graph.invoke(Command(resume='   '), config)
-        self.assertIn('__interrupt__', event)
-        self.assertNotIn('participants', agent.graph.get_state(config).values)
+        event = agent.graph.invoke(Command(resume="   "), config)
+        self.assertIn("__interrupt__", event)
+        self.assertNotIn("participants", agent.graph.get_state(config).values)
         self.assertEqual(agent.classifier.llm.prompts, [])
         agent.direct_request_handler.handle.assert_not_called()
 
