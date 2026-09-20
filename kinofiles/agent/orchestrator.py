@@ -210,9 +210,12 @@ class OrquestratorAgent:
 
         person = names[idx]
         msg = f"{person}, what are you in the mood for?" if person else "What are you in the mood for?"
+        
+        prefix = state.get("response", "") if idx == 0 else ""
         if (state.get("result") or {}).get("kind") == "classification_error":
-            msg = f"{state['response']}\n{msg}"
-        text = interrupt(prompt(msg, participant=person))
+            prefix = state.get("response", "")
+            
+        text = interrupt(prompt(msg, participant=person, explanation=prefix))
 
         # Classify
         try:
@@ -369,8 +372,9 @@ class OrquestratorAgent:
 
         person = names[idx]
         msg = f"{person}, which one speaks to you?" if person else "Which one speaks to you?"
+        explanation = state.get("response", "") if idx == 0 else ""
 
-        ans = interrupt(prompt(msg, movies, participant=person)).strip()
+        ans = interrupt(prompt(msg, movies, participant=person, explanation=explanation)).strip()
 
         vote_val = "none"
         inline_fb = ""
@@ -401,8 +405,9 @@ class OrquestratorAgent:
         ans = state.get("inline_feedback", "")
         if not ans:
             msg = "What else are you looking for?"
+            explanation = state.get("response", "")
             movies = state.get("movies", [])
-            ans = interrupt(prompt(msg, options=movies))
+            ans = interrupt(prompt(msg, options=movies, explanation=explanation))
 
         group_fb = list(state.get("group_feedback", []))
         group_fb.append(ans)
