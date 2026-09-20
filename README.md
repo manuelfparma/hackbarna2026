@@ -1,8 +1,15 @@
-# Kino Files: HackBarna 2026 Submission
+# <img src="kinofiles/frontend/assets/kinofiles-mark.svg" height="25" /> Kino Files: HackBarna 2026 Submission
 
 **Find your next favorite film with Kino Files, a conversational agent that listens to your group preferences and filters a real movie catalog to deliver reliable, personalized recommendations.**
 
 Finding the right movie often feels like a chore, and deciding what to watch as a group is even harder—it often requires a "neutral" voice to settle the debate. Traditional recommendation engines rely on rigid genre tags, while generic LLMs hallucinate non-existent titles or recommend films you can't watch. Kino Files solves this by blending the conversational fluidity of LLMs with a strict Retrieval-Augmented Generation (RAG) pipeline to keep all suggestions grounded in reality, acting as the perfect mediator for your movie night.
+
+---
+
+## 🚀 Live Demo
+
+**Try the app here:** [kino-files-agent.thebluetonguegiraffe.online](https://kino-files-agent.thebluetonguegiraffe.online/)  
+*(Note: Please allow microphone permissions in your browser to experience the full conversational voice agent).*
 
 ---
 
@@ -18,12 +25,66 @@ Finding the right movie often feels like a chore, and deciding what to watch as 
 
 Our entire codebase is housed in the [`kinofiles/`](./kinofiles) directory. Here is a high-level look at how we built the system:
 
-1. **The Vector Database:** We extracted the top 1,000 most popular films from the [Letterboxd Kaggle dataset](https://www.kaggle.com/datasets/gsimonx37/letterboxd), embedded 109 unique movie themes using Mistral, and populated a **Supabase** database with `pgvector` for semantic search.
-2. **The Orchestrator:** We built a stateful agent using **LangGraph**. It maintains conversational memory, handles complex intents (like refining searches or answering factual questions), and executes hybrid searches. Hard constraints (e.g., "Comedy") are executed as strict SQL filters, while soft constraints (e.g., "darker mood") are mapped using vector similarity matching.
-3. **The Voice Layer:** The backend communicates with a **Reflex** frontend designed for the living room, using **SLNG** to bridge the gap between user voice commands (Deepgram STT) and the agent's spoken responses (Aura-2 TTS).
-4. **The Narrator:** Raw database results are routed to **Nebius Qwen**, which acts as the agent's consistent voice, synthesizing the data into conversational responses without exposing internal IDs or hallucinating titles.
+```mermaid
+flowchart LR
+    classDef deterministic fill:#e1f5fe,stroke:#0277bd,stroke-width:2px,color:#000
+    classDef llm fill:#f3e5f5,stroke:#7b1fa2,stroke-width:2px,color:#000
 
-*(For a deep dive into our design decisions and algorithms, see the `SYSTEM_OVERVIEW.md` and `ALGORITHM_DECISIONS.md` inside the `kinofiles` folder).*
+    User([TV User]) <-->|Voice: SLNG + Deepgram| UI[Reflex Frontend]
+    UI <--> Orch[Orchestrator Agent]
+    
+    Orch -->|Delegates Search| Rec[Recommendation Agent]
+    
+    Rec -->|Classifies Intent| Router{Intent Router}
+    Router -->|Exact Constraints| SQL[(PostgreSQL\nStrict SQL Filters)]
+    Router -->|Mood / Plot| Vector[(Supabase pgvector\nMistral Embeddings)]
+    
+    SQL --> Nebius[Nebius Qwen Narrator]
+    Vector --> Nebius
+    
+    Nebius -->|Synthesized Reply| Orch
+
+    class UI,SQL deterministic;
+    class Orch,Rec,Router,Vector,Nebius llm;
+```
+
+1. **The Vector Database:** We extracted the top 1,000 most popular films from the [Letterboxd Kaggle dataset](https://www.kaggle.com/datasets/gsimonx37/letterboxd), embedded 109 unique movie themes using Mistral, and populated a **Supabase** database with `pgvector` for semantic search.
+2. **Multi-Agent Orchestration:** We built a dual-agent system using **LangGraph**. At the top level, the **Orchestrator Agent** acts as a group mediator, asking multiple users for their preferences and conducting voting rounds. It delegates search tasks to the underlying **Recommendation Agent**. This subagent is uniquely capable of analyzing natural language to dynamically route requests to the most appropriate query method: a semantic mood search using `pgvector`, a plot-identification search using description embeddings, a "similar-to" seed search, or bypassing vectors entirely to run strict SQL database filters (e.g., for exact genre/actor constraints).
+3. **The Voice Layer:** The backend communicates with a **Reflex** frontend designed for the living room, using **SLNG** to bridge the gap between user voice commands (Deepgram STT) and the agent's spoken responses (Aura-2 TTS).
+
+### Recommendation Agent Capabilities
+
+The Recommendation Agent does not use a "one-size-fits-all" retrieval strategy. By classifying user intent, it executes specific capabilities:
+*   **Semantic Mood Search:** ("Something melancholy about family") Embeds the query to find vector neighbors in the `themes_embeddings` table.
+*   **Plot Identification:** ("An animated movie about a rat in Paris") Embeds the query to find vector neighbors in the `descriptions_embeddings` table to guess the movie.
+*   **Similar-To Search:** ("Like The Dark Knight") Locates the seed film's exact description and runs a vector search against other movie descriptions to find true narrative neighbors.
+*   **Direct Filters:** ("A 90s French comedy") Bypasses vectors entirely to use strict SQL filters on genres, languages, and release decades to guarantee exact matches.
+*   **Factual Lookups:** ("Who directed Inception?") Fetches the catalog row to answer questions directly, without overwriting the user's active movie shortlist.
+
+*(For a deep dive into our design decisions and algorithms, see the `README.md` inside the `kinofiles` folder).*
+
+---
+
+## 📊 Benchmark: Agent vs. LLM Baseline
+
+We benchmarked our RAG-based agent against a standard LLM baseline to measure cost and hallucination rates.
+
+**The Test:** A 3-turn conversation ("Comedy with Jim Carrey" → "with action" → "nevermind, a film about a rat in Paris").
+**The Baseline:** A single LLM call per turn with the entire 1,000-movie catalog pasted into the prompt. Both systems ran on Mistral to ensure token counts were comparable.
+
+| Metric | Kino Files Agent | Baseline (Catalog in Prompt) |
+| :--- | :--- | :--- |
+| **Total Tokens** | 11,275 | 50,572 |
+| **Total Time** | 6.34s | 5.79s |
+| **LLM Calls** | 7 | 3 |
+| **Grounded Shortlist** | **12/12 (100%)** | 6/24 (25%, with 5 duplicates) |
+
+**Key Takeaways:**
+*   **4.5× Cheaper:** By retrieving only relevant metadata via vector search instead of flooding the context window, the agent uses significantly fewer tokens.
+*   **Zero Hallucinations:** Every single movie proposed by our Agent actually exists in the database. 
+*   **Baseline Failure:** Despite explicit instructions to *only* use the provided catalog, the baseline hallucinated heavily. The catalog contains *no* Jim Carrey movies, yet the baseline confidently returned *The Mask* and *Liar Liar*. On turn 3, it even recommended a non-existent "Ratatouille: The Animated Series" five times.
+
+*(Note: Quality is scored by an LLM judge evaluating semantic criteria, entirely uncoupled from the cost-measured system).*
 
 ---
 
