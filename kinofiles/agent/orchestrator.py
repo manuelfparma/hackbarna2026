@@ -18,7 +18,14 @@ from pydantic import BaseModel, Field
 from agent.io.turn import prompt
 from agent.llm import build_llm, build_mistral_llm
 from agent.nodes.classifier import Classifier
-from agent.nodes.criteria import has_catalog_filters, merge_criteria, merge_group_criteria, empty_criteria
+from agent.nodes.criteria import (
+    empty_criteria,
+    group_brief,
+    has_catalog_filters,
+    merge_criteria,
+    merge_group_criteria,
+    promote_genre_themes,
+)
 from agent.nodes.direct_request import DirectRequestHandler
 from agent.nodes.theme_recommender import ThemeRecommender
 from agent.nodes.reply import ReplyComposer, MAX_HISTORY_TURNS
@@ -47,6 +54,7 @@ class State(TypedDict):
     # Mediation
     group_criteria: dict
     compromise_notes: str
+    brief: dict
     round: int
     
     # Recommendation
@@ -162,6 +170,25 @@ class OrquestratorAgent:
         entities = result.entities.model_dump()
         action = result.criteria_action
         
+        if not any(entities.values()):
+            # A bare answer ("action", "comedy") reads as small talk with no
+            # question in front of it, so the classifier files it as social
+            # and the person ends up contributing nothing at all to the merge.
+            # Restoring the question around the answer recovers it.
+            retry = self.classifier.classify(
+                "When asked what they are in the mood for tonight, "
+                f"they answered: {text}"
+            )
+            retry_entities = promote_genre_themes(retry.entities.model_dump())
+            if any(retry_entities.values()):
+                logger.info(
+                    "collect | %s | bare answer %r recovered as %s",
+                    person,
+                    text,
+                    _compact(retry_entities),
+                )
+                entities, action = retry_entities, retry.criteria_action
+        
         current_criteria = state["per_person_criteria"][person]
         new_criteria = merge_criteria(current_criteria, entities, action)
         
@@ -232,6 +259,34 @@ class OrquestratorAgent:
             result.get("error"),
         )
         
+        # The group-level account of what the search settled on. Titles are
+        # deliberately not part of it: the explanation is about the criteria
+        # the group converged on, not about any individual film.
+        brief = group_brief(
+            state["per_person_criteria"],
+            refined=bool(state.get("group_feedback")),
+        )
+        logger.info(
+            "mediate | round=%s | brief | consensus=%s | shared=%s | individual=%s | seeds=%s",
+            round_no,
+            brief["consensus"],
+            brief["shared"],
+            brief["individual"],
+            brief["seed_movies"],
+        )
+        logger.info(
+            "mediate | round=%s | brief | matched_themes=%s | seed=%s",
+            round_no,
+            result.get("themes") or [],
+            result.get("seed"),
+        )
+        if brief["consensus"] == "none":
+            logger.warning(
+                "mediate | round=%s | criteria diverge across %s people",
+                round_no,
+                len(state["participants"]),
+            )
+        
         # Compose response
         response = self.reply_composer.compose(
             request="mediate",
@@ -239,11 +294,14 @@ class OrquestratorAgent:
             entities={},
             result=result,
             history=state.get("history", []),
-            feedback=[],
+            # What the group asked for jointly after the last shortlist. From
+            # round 2 on this, not the original split, is the live request.
+            feedback=state.get("group_feedback", []),
             movies=movies,
             search_criteria=merged,
             per_person_criteria=state["per_person_criteria"],
-            compromise_notes=notes
+            compromise_notes=notes,
+            brief=brief,
         )
         
         history = state.get("history", []) + [
@@ -255,6 +313,7 @@ class OrquestratorAgent:
             update={
                 "group_criteria": merged,
                 "compromise_notes": notes,
+                "brief": brief,
                 "movies": movies,
                 "result": result,
                 "show_options": bool(movies),
@@ -281,19 +340,50 @@ class OrquestratorAgent:
                 if v and v != "none":
                     tally[v] = tally.get(v, 0) + 1
             if not tally:
-                return Command(goto="refine", update={"response": "Nobody liked those options."})
+                return Command(
+                    goto="refine",
+                    update={
+                        "response": (
+                            "None of those landed for any of you. "
+                            "Have a quick word and tell me together what would work better."
+                        )
+                    },
+                )
             
             # Check for tie
             max_votes = max(tally.values())
             top_movies = [m for m, v in tally.items() if v == max_votes]
             if len(top_movies) > 1:
-                return Command(goto="refine", update={"response": "We have a tie! Let's refine our search."})
+                # Naming who went where turns "there is a tie" into something
+                # they can actually resolve between themselves.
+                split = ", ".join(
+                    f"{person} went for {title}"
+                    for person, title in votes.items()
+                    if title and title != "none"
+                )
+                return Command(
+                    goto="refine",
+                    update={
+                        "response": (
+                            f"It's a tie — {split}. You two are the only ones who can "
+                            "break it, so talk it over and tell me what you can both live with."
+                        )
+                    },
+                )
             
             winner = top_movies[0]
             return Command(goto="goodbye", update={"choice": winner})
             
         person = names[idx]
-        msg = f"{person}, which one speaks to you?"
+        # Name the person and point at the shortlist just presented: after a
+        # compromise they need to know they are judging *this* set.
+        msg = f"{person}, with these suggestions, which one speaks to you?"
+        if idx == 0 and state.get("response"):
+            # `mediate` composes the group explanation, but nothing ever
+            # renders `state["response"]` -- the CLI loop and the API both
+            # only print an interrupt's text. Lead the first vote with it,
+            # the way `refine` already leads its own question.
+            msg = f"{state['response']}\n{msg}"
         
         ans = interrupt(prompt(msg, movies, participant=person)).strip()
         
@@ -317,7 +407,10 @@ class OrquestratorAgent:
             return Command(goto="goodbye", update={"choice": fallback})
             
         text = state.get("response", "Let's try again.")
-        msg = f"{text}\nWhat should we change? (e.g. 'less sci-fi, more comedy')"
+        msg = (
+            f"{text}\nAgree on one change between you and tell me what it "
+            "should be (e.g. 'less sci-fi, more comedy')."
+        )
         ans = interrupt(prompt(msg))
         
         group_fb = list(state.get("group_feedback", []))

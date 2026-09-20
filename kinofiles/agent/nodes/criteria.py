@@ -129,6 +129,22 @@ def normalize_criteria(criteria: dict | None) -> dict:
     return normalized
 
 
+def promote_genre_themes(criteria: dict | None) -> dict:
+    """Lift theme words that are really catalog genres into `genres`.
+
+    A bare answer ("action") gets its genre read as a mood, which would keep
+    it out of the genre merge that decides what the group has in common.
+    `normalize_criteria` only ever demotes in the other direction, so the lift
+    has to happen here.
+    """
+    normalized = normalize_criteria(criteria)
+    promoted, remaining = split_genres(normalized["themes"])
+    if promoted:
+        normalized["genres"] = normalize_genres(normalized["genres"] + promoted)
+        normalized["themes"] = remaining
+    return normalized
+
+
 def merge_criteria(
     current: dict | None,
     turn_entities: dict | None,
@@ -179,6 +195,86 @@ def build_theme_query(request: str, criteria: dict | None) -> str:
         if movie.get("role") in {"seed", "liked"}
     )
     return "; ".join(_dedupe([part for part in parts if part]))
+
+
+# Everything a person can state a preference about, except seed movies, which
+# carry a role and are summarised separately.
+BRIEF_FIELDS = tuple(field for field in CRITERIA_FIELDS if field != "movies")
+
+
+def group_brief(per_person: dict[str, dict], refined: bool = False) -> dict:
+    """Recover the shape of the group's agreement behind the merged query.
+
+    Mediation flattens everyone into one search, which leaves nothing able to
+    say *why* that search is what it is. Counting how many people asked for
+    each value splits the brief into what the group converged on and what a
+    single person brought, which is the explanation worth speaking aloud.
+    """
+    normalized = {
+        person: normalize_criteria(criteria)
+        for person, criteria in (per_person or {}).items()
+    }
+
+    # (field, casefolded value) -> everyone who asked for it.
+    askers: dict[tuple[str, str], list[str]] = {}
+    labels: dict[tuple[str, str], str] = {}
+    for person, criteria in normalized.items():
+        for field in BRIEF_FIELDS:
+            for value in criteria[field]:
+                if not isinstance(value, str) or not value.strip():
+                    continue
+                key = (field, value.strip().casefold())
+                if person not in askers.setdefault(key, []):
+                    askers[key].append(person)
+                labels.setdefault(key, value.strip())
+
+    shared, individual = [], {}
+    for key, people in askers.items():
+        entry = {"field": key[0], "value": labels[key]}
+        if len(people) > 1:
+            shared.append({**entry, "wanted_by": people})
+        else:
+            individual.setdefault(people[0], []).append(entry)
+
+    seeds = [
+        {"title": movie["title"], "from": person, "role": movie.get("role")}
+        for person, criteria in normalized.items()
+        for movie in criteria["movies"]
+        if isinstance(movie, dict) and movie.get("title")
+    ]
+
+    # Named rather than left for the reply model to infer: whether the group
+    # actually agreed is the one thing it must not get wrong, and "no overlap
+    # at all" is the case worth saying out loud instead of papering over.
+    contributors = {person for people in askers.values() for person in people}
+    if refined:
+        # They came back with a joint request, so whatever split they started
+        # from has been settled between them; leading with it again would be
+        # stale and would undo the agreement they just reached. Clearing the
+        # split matters more than the rule in the prompt: the reply model
+        # follows the data it is handed, and while the round-1 divergence is
+        # still in the payload it keeps writing the divergence sentence.
+        consensus = "refined"
+        shared, individual = [], {}
+    elif len(normalized) < 2:
+        consensus = "single"
+    elif len(contributors) < 2:
+        # Only one person's wishes were captured. That is missing input, not a
+        # clash, and announcing divergence here would be a plain falsehood.
+        consensus = "unknown"
+    elif not shared:
+        consensus = "none"
+    elif not individual:
+        consensus = "full"
+    else:
+        consensus = "partial"
+
+    return {
+        "shared": shared,
+        "individual": individual,
+        "seed_movies": seeds,
+        "consensus": consensus,
+    }
 
 
 def merge_group_criteria(per_person: dict[str, dict]) -> tuple[dict, str]:
