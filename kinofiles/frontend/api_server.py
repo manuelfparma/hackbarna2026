@@ -22,4 +22,8 @@ if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s | %(message)s")
     logging.getLogger("httpx").setLevel(logging.WARNING)
     logging.getLogger("httpx2").setLevel(logging.WARNING)
+    # The Hub relays server-side notices (e.g. the unauthenticated-request
+    # nag) through this logger, which also carries its own handler, so the
+    # same line lands twice. Silencing the logger suppresses both copies.
+    logging.getLogger("huggingface_hub").setLevel(logging.ERROR)
     uvicorn.run("api_server:app", host="0.0.0.0", port=8000, reload=True)

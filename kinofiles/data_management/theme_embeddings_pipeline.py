@@ -1,9 +1,12 @@
+import logging
 import os
 from pathlib import Path
 
 from dotenv import load_dotenv
 from langchain_mistralai import MistralAIEmbeddings
 from supabase import Client, create_client
+
+logger = logging.getLogger(__name__)
 
 EMBED_BATCH_SIZE = 50
 UPSERT_BATCH_SIZE = 100
@@ -21,7 +24,7 @@ def _client() -> Client | None:
         print("Error: SUPABASE_URL or SUPABASE_KEY is missing or invalid.")
         print("Please update your .env file with the correct credentials.")
         return None
-    print(f"Connecting to Supabase at {url}...")
+    logger.debug("Connecting to Supabase at %s", url)
     return create_client(url, key)
 
 

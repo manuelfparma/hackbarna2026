@@ -20,6 +20,11 @@ welcome -> collect_preferences (each participant) -> mediate
 ```
 
 - `welcome` extracts 1–4 participant names, with a text-splitting fallback.
+  One named participant receives a solo confirmation. If the extractor finds no
+  names and the message is a movie request/preference, it starts a one-person
+  group named `You` and keeps that message as the preference, without asking for
+  it again. Blank or unrelated messages prompt clarification; classifier failures
+  retry welcome without starting a partial session.
 - `collect_preferences` classifies one request per person and stores independent
   preference text and normalized criteria.
 - `mediate` merges those criteria, retrieves options, and provides per-person

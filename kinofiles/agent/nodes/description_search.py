@@ -1,5 +1,9 @@
-from agent.nodes.criteria import has_catalog_filters
+import logging
+
+from agent.nodes.criteria import has_catalog_filters, normalize_criteria
 from agent.nodes.filters import matches_filters
+
+logger = logging.getLogger(__name__)
 
 DESC_MATCH_THRESHOLD = 0.68
 
@@ -49,6 +53,14 @@ def search_descriptions(
             )
             allowed = {row["id"] for row in rows if matches_filters(row, c)}
             candidates = [row for row in candidates if row["movie_id"] in allowed]
+        logger.info(
+            "description_search | criteria=%s | excluded_ids=%s | excluded_names=%s | kept=%s/%s candidates",
+            {key: value for key, value in normalize_criteria(c).items() if value},
+            len(excluded_ids),
+            len(excluded_names),
+            len(candidates),
+            len(matches),
+        )
         candidates.sort(key=lambda row: -row.get("similarity", 0))
         if len(candidates) >= limit or len(matches) < count or count >= 1000:
             return candidates[:limit]

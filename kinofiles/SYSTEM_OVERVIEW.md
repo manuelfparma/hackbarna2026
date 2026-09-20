@@ -8,6 +8,10 @@ about an option, and choose it**. This guide describes the reduced feature set.
 
 - **Default web/orchestrator flow:** asks for 1–4 names, collects each person's
   preferences, merges a group brief, and asks everyone for a numbered vote.
+  If no names are extracted from a movie request such as “Any comedy?”, it starts
+  a one-person group called `You`, retaining the request as that person's preference.
+  This remains group-mode voting, not a switch to the standalone agent. Blank or
+  unrelated unnamed input prompts clarification, and classifier failures can retry.
   Ties or no votes lead to refinement. The original group flow has a three-round
   cap and then picks the first available option, or a generic fallback label if
   no options exist. It is a staged voting workflow, not the solo free-form chat.

@@ -1,8 +1,11 @@
 """Persistent, normalized search criteria for multi-turn recommendations."""
 
-from copy import deepcopy
+import logging
 import re
+from copy import deepcopy
 from typing import Literal
+
+logger = logging.getLogger(__name__)
 
 CriteriaAction = Literal["add", "replace", "reset", "keep", "remove"]
 ClearField = Literal[
@@ -175,9 +178,7 @@ def normalize_criteria(criteria: dict | None) -> dict:
     normalized["themes"] = _dedupe(normalized["themes"] + demoted)
     remaining = []
     for theme in normalized["themes"]:
-        label = re.sub(
-            r"\s+(?:movies?|films?)$", "", theme.strip(), flags=re.IGNORECASE
-        )
+        label = re.sub(r"\s+(?:movies?|films?)$", "", theme.strip(), flags=re.IGNORECASE)
         genres = normalize_genres([label])
         if genres and (label.casefold() == "animation" or label != theme.strip()):
             normalized["genres"] = _dedupe(normalized["genres"] + genres)
@@ -186,11 +187,7 @@ def normalize_criteria(criteria: dict | None) -> dict:
     normalized["themes"] = remaining
     normalized["exclude_genres"] = normalize_genres(normalized["exclude_genres"])
     normalized["genre_groups"] = _dedupe(
-        [
-            normalize_genres(group)
-            for group in normalized["genre_groups"]
-            if normalize_genres(group)
-        ]
+        [normalize_genres(group) for group in normalized["genre_groups"] if normalize_genres(group)]
     )
     if len(normalized["genre_groups"]) == 1:
         normalized["genres"] = normalized["genre_groups"][0]
@@ -198,10 +195,7 @@ def normalize_criteria(criteria: dict | None) -> dict:
     elif normalized["genre_groups"]:
         normalized["genres"] = []
     normalized["streaming"] = _dedupe(
-        [
-            SERVICE_ALIASES.get(v.casefold(), v.casefold())
-            for v in normalized["streaming"]
-        ]
+        [SERVICE_ALIASES.get(v.casefold(), v.casefold()) for v in normalized["streaming"]]
     )
     for field in SCALAR_FIELDS:
         normalized[field] = (criteria or {}).get(field)
@@ -233,27 +227,15 @@ def normalize_criteria(criteria: dict | None) -> dict:
         if text == "short" and normalized["minute_max"] is None:
             normalized["minute_max"] = 99
         elif text == "standard":
-            normalized["minute_min"] = (
-                normalized["minute_min"]
-                if normalized["minute_min"] is not None
-                else 100
-            )
-            normalized["minute_max"] = (
-                normalized["minute_max"]
-                if normalized["minute_max"] is not None
-                else 129
-            )
+            normalized["minute_min"] = normalized["minute_min"] if normalized["minute_min"] is not None else 100
+            normalized["minute_max"] = normalized["minute_max"] if normalized["minute_max"] is not None else 129
         elif text in {"long", "epic"} and normalized["minute_min"] is None:
             normalized["minute_min"] = 150 if text == "epic" else 130
-        match = re.fullmatch(
-            r"(under|over|at most|at least) (\d+(?:\.\d+)?) (minutes?|hours?)", text
-        )
+        match = re.fullmatch(r"(under|over|at most|at least) (\d+(?:\.\d+)?) (minutes?|hours?)", text)
         if match:
             minutes = float(match[2]) * (60 if match[3].startswith("hour") else 1)
             field = "minute_max" if match[1] in {"under", "at most"} else "minute_min"
-            normalized[field] = int(minutes) + (
-                -1 if match[1] == "under" else 1 if match[1] == "over" else 0
-            )
+            normalized[field] = int(minutes) + (-1 if match[1] == "under" else 1 if match[1] == "over" else 0)
     return normalized
 
 
@@ -290,15 +272,9 @@ def merge_criteria(
     for field in CRITERIA_FIELDS:
         merged[field] = _dedupe(existing[field] + incoming[field])
     for field in SCALAR_FIELDS:
-        merged[field] = (
-            incoming[field] if incoming[field] is not None else existing[field]
-        )
-    old_groups = existing["genre_groups"] or (
-        [existing["genres"]] if existing["genres"] else []
-    )
-    new_groups = incoming["genre_groups"] or (
-        [incoming["genres"]] if incoming["genres"] else []
-    )
+        merged[field] = incoming[field] if incoming[field] is not None else existing[field]
+    old_groups = existing["genre_groups"] or ([existing["genres"]] if existing["genres"] else [])
+    new_groups = incoming["genre_groups"] or ([incoming["genres"]] if incoming["genres"] else [])
     if existing["genre_groups"] or incoming["genre_groups"]:
         merged["genre_groups"] = (
             [_dedupe(a + b) for a in old_groups for b in new_groups]
@@ -333,16 +309,19 @@ def has_catalog_filters(criteria: dict | None) -> bool:
 
 
 def build_theme_query(request: str, criteria: dict | None) -> str:
-    """Compose one semantic query while leaving genres as strict filters."""
+    """Compose one semantic query while leaving genres as strict filters.
+
+    The request arrives pre-joined (the mediator concatenates every
+    participant's raw utterance with "; "), while the criteria below hold the
+    classifier's normalized reading of those same utterances. Splitting the
+    request back apart is what lets the dedupe at the bottom collapse the two
+    copies — against one joined blob it can only compare the whole string.
+    """
     normalized = normalize_criteria(criteria)
-    parts = [request.strip()]
+    parts = [segment.strip() for segment in request.split(";")]
     parts.extend(normalized["themes"])
     parts.extend(normalized["time_periods"])
-    parts.extend(
-        movie["title"]
-        for movie in normalized["movies"]
-        if movie.get("role") in {"seed", "liked"}
-    )
+    parts.extend(movie["title"] for movie in normalized["movies"] if movie.get("role") in {"seed", "liked"})
     return "; ".join(_dedupe([part for part in parts if part]))
 
 
@@ -360,9 +339,7 @@ def merge_group_criteria(per_person: dict[str, dict]) -> tuple[dict, str]:
     if not per_person:
         return empty_criteria(), "No preferences provided."
 
-    normalized_per_person = {
-        name: normalize_criteria(crit) for name, crit in per_person.items()
-    }
+    normalized_per_person = {name: normalize_criteria(crit) for name, crit in per_person.items()}
 
     merged = empty_criteria()
 
@@ -376,12 +353,26 @@ def merge_group_criteria(per_person: dict[str, dict]) -> tuple[dict, str]:
         if intersect:
             merged["genres"] = list(intersect)
             genre_note = f"Found common genres: {', '.join(intersect)}."
+            logger.info(
+                "merge_group | genres=intersection | sets=%s | merged=%s",
+                [sorted(genre_set) for genre_set in all_genres_sets],
+                sorted(intersect),
+            )
         else:
             union = set.union(*all_genres_sets)
             merged["genres"] = list(union)
             genre_note = f"Combined different genre preferences: {', '.join(union)}."
+            # The catalog applies genres with array containment (AND), so a
+            # union of disjoint genres narrows the search instead of relaxing it.
+            logger.warning(
+                "merge_group | genres=union(no overlap) | sets=%s | merged=%s "
+                "| downstream filter is AND, expect few or zero matches",
+                [sorted(genre_set) for genre_set in all_genres_sets],
+                sorted(union),
+            )
     else:
         genre_note = "No specific genre constraints."
+        logger.info("merge_group | genres=none | no genre filter applied")
 
     for field in CRITERIA_FIELDS:
         if field == "genres":
@@ -392,13 +383,14 @@ def merge_group_criteria(per_person: dict[str, dict]) -> tuple[dict, str]:
         merged[field] = _dedupe(all_vals)
 
     for field in SCALAR_FIELDS:
-        values = [
-            crit[field]
-            for crit in normalized_per_person.values()
-            if crit[field] is not None
-        ]
+        values = [crit[field] for crit in normalized_per_person.values() if crit[field] is not None]
         if values:
             merged[field] = min(values) if field.endswith("_max") else max(values)
 
     notes = f"Merged preferences for {len(per_person)} people. {genre_note}"
+    logger.info(
+        "merge_group | people=%s | merged=%s",
+        list(per_person),
+        {field: value for field, value in merged.items() if value},
+    )
     return merged, notes
