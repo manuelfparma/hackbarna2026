@@ -350,8 +350,16 @@ from .io_api import api as voice_api
 # the fallback keeps working if that ever stops being true.
 BACKEND_URL_JS = """
   const apiURL = (path) => {
-    try { return new URL(path, getBackendURL(env.PING).href).href; }
-    catch (e) { return `${window.location.protocol}//${window.location.hostname}:8000${path}`; }
+    try { 
+      if (typeof getBackendURL !== 'undefined' && typeof env !== 'undefined') {
+        return new URL(path, getBackendURL(env.PING).href).href; 
+      }
+    } catch (e) {}
+    
+    if (window.location.port === "3000") {
+      return `${window.location.protocol}//${window.location.hostname}:8000${path}`;
+    }
+    return path;
   };
 """
 
@@ -363,7 +371,8 @@ def play_audio_script(audio_b64: str) -> str:
   try {{
     const bytes = Uint8Array.from(atob({json.dumps(audio_b64)}), (c) => c.charCodeAt(0));
     const blob = new Blob([bytes], {{ type: "audio/wav" }});
-    new Audio(URL.createObjectURL(blob)).play();
+    const audio = new Audio(URL.createObjectURL(blob));
+    await audio.play().catch(e => console.warn("Autoplay blocked:", e));
   }} catch (e) {{}}
 }})()
 """
@@ -390,15 +399,20 @@ TOGGLE_RECORDING_JS = """
     }
   }
 
-  const stopped = new Promise((resolve) => { recorder.onstop = resolve; });
+  const stopped = new Promise((resolve) => {
+    recorder.onstop = resolve;
+    setTimeout(resolve, 800); // safety fallback in case onstop doesn't fire
+  });
   recorder.stop();
   await stopped;
-  window.__voiceStream.getTracks().forEach((t) => t.stop());
+  if (window.__voiceStream) {
+    window.__voiceStream.getTracks().forEach((t) => t.stop());
+  }
   window.__voiceRecorder = null;
 
   const mime = (recorder.mimeType || "audio/webm").split(";")[0];
   const ext = mime.includes("mp4") ? "mp4" : mime.includes("ogg") ? "ogg" : "webm";
-  const blob = new Blob(window.__voiceChunks, { type: mime });
+  const blob = new Blob(window.__voiceChunks || [], { type: mime });
   if (!blob.size) return JSON.stringify({ recording: false, error: "No audio recorded" });
 
   const form = new FormData();
