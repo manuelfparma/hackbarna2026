@@ -78,6 +78,7 @@ class CapabilityTests(unittest.TestCase):
                     "name": "Drive",
                     "rating": 8.0,
                     "themes": ["Fast cars", "Heists"],
+                    "description": "A getaway driver faces a dangerous job.",
                 }
             ],
         )
@@ -86,17 +87,26 @@ class CapabilityTests(unittest.TestCase):
         result = recommender.recommend("cars and crime")
 
         self.assertEqual(result["titles"], ["Drive"])
+        self.assertEqual(
+            result["descriptions"], {"Drive": "A getaway driver faces a dangerous job."}
+        )
         self.assertEqual(result["themes"], ["Fast cars", "Heists"])
         self.assertNotIn("similarity", result)
         self.assertNotIn("scores", result)
 
     def test_direct_request_returns_titles_without_catalog_ids(self):
         handler = DirectRequestHandler.__new__(DirectRequestHandler)
-        handler.supabase = FakeSupabase([], [{"id": 42, "name": "Arrival"}])
+        handler.supabase = FakeSupabase(
+            [],
+            [{"id": 42, "name": "Arrival", "description": "Visitors arrive on Earth."}],
+        )
 
         result = handler.handle("directors", "Denis Villeneuve")
 
         self.assertEqual(result["titles"], ["Arrival"])
+        self.assertEqual(
+            result["descriptions"], {"Arrival": "Visitors arrive on Earth."}
+        )
         self.assertNotIn("id", result)
         self.assertNotIn("42", str(result))
 

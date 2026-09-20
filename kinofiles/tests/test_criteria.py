@@ -78,7 +78,7 @@ class CriteriaTests(unittest.TestCase):
 
         self.assertIn("also make it exciting", query)
         self.assertIn("found family", query)
-        self.assertIn("friends", query)
+        self.assertNotIn("friends", query)
         self.assertNotIn("Comedy", query)
 
 

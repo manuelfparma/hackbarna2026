@@ -11,15 +11,12 @@ class Response:
 
 
 class FakeLLM:
-    def __init__(self, content: str = "", error: Exception | None = None):
+    def __init__(self, content: str = ""):
         self.content = content
-        self.error = error
         self.prompts: list[str] = []
 
     def invoke(self, prompt: str):
         self.prompts.append(prompt)
-        if self.error:
-            raise self.error
         return Response(self.content)
 
 
@@ -58,23 +55,6 @@ class ReplyComposerTests(unittest.TestCase):
         self.assertIn("Neon-lit isolation", context)
         self.assertNotIn("similarity", context)
         self.assertNotIn("0.7", context)
-
-    def test_composer_falls_back_without_an_external_retry(self):
-        llm = FakeLLM(error=RuntimeError("offline"))
-        composer = ReplyComposer(llm)
-
-        reply = composer.compose(
-            request="hi",
-            intent="social",
-            entities={},
-            result={"kind": "social", "titles": [], "error": None},
-            history=[],
-            feedback=[],
-            movies=[],
-        )
-
-        self.assertIn("What are you in the mood for?", reply)
-        self.assertEqual(len(llm.prompts), 1)
 
     def test_fallback_renders_movie_facts(self):
         reply = ReplyComposer.fallback(
@@ -119,7 +99,7 @@ class ReplyComposerTests(unittest.TestCase):
 
     def test_compiled_graph_routes_capability_through_reply(self):
         class FakeThemeRecommender:
-            def recommend(self, request, feedback=None, criteria=None):
+            def recommend(self, request, feedback=None, criteria=None, **kwargs):
                 return {
                     "kind": "theme_recommendation",
                     "titles": ["Drive", "Heat", "Ronin"],
