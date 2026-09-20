@@ -29,22 +29,39 @@ class ChatRequest(BaseModel):
     voice: str | None = None
 
 
-def _reply(status: str, text: str, options: list[str] | None = None, voice: str | None = None, **extra) -> dict:
-    """Build a chat response, synthesizing speech for `text` alongside it.
+def _reply(
+    status: str,
+    text: str,
+    options: list[str] | None = None,
+    voice: str | None = None,
+    explanation: str = "",
+    **extra,
+) -> dict:
+    """Build a chat response, synthesizing speech for the spoken parts.
 
-    Only `text` is narrated: `options` are for the screen, so they never
-    reach TTS. This is the single point every turn's reply passes through,
-    so audio is always generated here rather than the frontend fetching it
-    separately. TTS failures degrade to text-only rather than failing the
-    whole turn.
+    Only `options` are kept out of TTS: they are for the screen, and a list
+    of titles makes for terrible speech. `explanation` is the mediator
+    accounting for the shortlist, so it is spoken ahead of the question but
+    returned as its own field, letting the frontend give it its own place on
+    screen instead of running it into the question. This is the single point
+    every turn's reply passes through, so audio is always generated here
+    rather than the frontend fetching it separately. TTS failures degrade to
+    text-only rather than failing the whole turn.
     """
-    payload = {"status": status, "reply": text, "options": options or [], **extra}
-    if text.strip():
+    payload = {
+        "status": status,
+        "reply": text,
+        "explanation": explanation,
+        "options": options or [],
+        **extra,
+    }
+    narration = " ".join(part for part in (explanation, text) if part.strip())
+    if narration.strip():
         try:
             if voice:
-                payload["audio"] = base64.b64encode(tts.synthesize(text, voice=voice)).decode()
+                payload["audio"] = base64.b64encode(tts.synthesize(narration, voice=voice)).decode()
             else:
-                payload["audio"] = base64.b64encode(tts.synthesize(text)).decode()
+                payload["audio"] = base64.b64encode(tts.synthesize(narration)).decode()
         except Exception:
             payload["audio"] = None
     return payload
@@ -78,6 +95,7 @@ def chat_with_agent(req: ChatRequest):
                 pending["text"],
                 options=pending["options"],
                 voice=req.voice,
+                explanation=pending.get("explanation", ""),
                 participant=current_participant,
                 participants=[p for p in participants if p],
                 votes=votes,

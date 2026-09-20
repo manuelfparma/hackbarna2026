@@ -484,14 +484,15 @@ class OrquestratorAgent:
             if person
             else "With these suggestions, which one speaks to you?"
         )
-        if idx == 0 and state.get("response"):
-            # `mediate` composes the group explanation, but nothing ever
-            # renders `state["response"]` -- the CLI loop and the API both
-            # only print an interrupt's text. Lead the first vote with it,
-            # the way `refine` already leads its own question.
-            msg = f"{state['response']}\n{msg}"
+        # `mediate` composes the group explanation into `response`; hand it
+        # over beside the question so each surface can lay it out itself.
+        # Only the first voter gets it -- it accounts for the shortlist once,
+        # not once per person.
+        explanation = state.get("response", "") if idx == 0 else ""
 
-        ans = interrupt(prompt(msg, movies, participant=person)).strip()
+        ans = interrupt(
+            prompt(msg, movies, participant=person, explanation=explanation)
+        ).strip()
 
         vote_val = "none"
         inline_fb = ""
@@ -528,11 +529,16 @@ class OrquestratorAgent:
                 "Agree on one change between you and tell me what it should "
                 "be (e.g. 'less sci-fi, more comedy')."
             )
-            text = state.get("response", "")
-            if text:
-                msg = f"{text}\n{msg}"
             movies = state.get("movies", [])
-            ans = interrupt(prompt(msg, options=movies))
+            ans = interrupt(
+                prompt(
+                    msg,
+                    options=movies,
+                    # The tie breakdown, or that nothing landed: what they
+                    # are being asked to resolve.
+                    explanation=state.get("response", ""),
+                )
+            )
 
         group_fb = list(state.get("group_feedback", []))
         group_fb.append(ans)
@@ -578,6 +584,8 @@ class OrquestratorAgent:
         event = self.graph.invoke({}, config)
         while "__interrupt__" in event:
             pending = event["__interrupt__"][0].value
+            if pending.get("explanation"):
+                print(pending["explanation"])
             print(pending["text"])
             for i, option in enumerate(pending["options"], 1):
                 print(f"{i}. {option}")

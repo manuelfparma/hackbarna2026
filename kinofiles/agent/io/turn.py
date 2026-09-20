@@ -11,6 +11,25 @@ neither can own this helper without the other importing it in a circle.
 """
 
 
-def prompt(text: str, options: list[str] | None = None, participant: str | None = None, criteria: dict | None = None) -> dict:
-    """Build the payload an `interrupt()` hands back to the caller."""
-    return {"text": text, "options": options or [], "participant": participant, "criteria": criteria or {}}
+def prompt(
+    text: str,
+    options: list[str] | None = None,
+    participant: str | None = None,
+    criteria: dict | None = None,
+    explanation: str | None = None,
+) -> dict:
+    """Build the payload an `interrupt()` hands back to the caller.
+
+    `explanation` is the mediator accounting for the shortlist it just built.
+    It travels beside `text` rather than glued onto it because it is a
+    different kind of utterance -- one addressed to the whole group, where
+    `text` asks one person for an answer -- and every surface wants to lay
+    the two out differently.
+    """
+    return {
+        "text": text,
+        "options": options or [],
+        "participant": participant,
+        "criteria": criteria or {},
+        "explanation": explanation or "",
+    }

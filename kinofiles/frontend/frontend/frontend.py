@@ -30,6 +30,11 @@ class AgentState(rx.State):
     votes: dict[str, str] = {}
     current_name: str = ""
 
+    # The mediator's account of the shortlist it just built. Addressed to the
+    # whole group, unlike the question in `messages`, which asks one person to
+    # answer -- so it gets its own line above rather than being run into it.
+    explanation: str = ""
+
     # The titles the agent last put on the table, the art found for them, and
     # the one the viewer is looking at. `selected` is only a highlight until
     # `confirm_selection` sends it back as the answer.
@@ -143,6 +148,10 @@ class AgentState(rx.State):
         return len(self.messages) > 0
 
     @rx.var
+    def has_explanation(self) -> bool:
+        return self.explanation != ""
+
+    @rx.var
     def history(self) -> list[dict[str, str]]:
         """The turns before this one, fading out as they age."""
         past = self.messages[:-1][-3:]
@@ -250,6 +259,9 @@ class AgentState(rx.State):
             self.is_done = data.get("status") == "done"
             if "criteria" in data:
                 self.search_criteria = data["criteria"]
+            # Cleared when absent, or the reasoning behind one shortlist
+            # would still be on screen over the next one.
+            self.explanation = data.get("explanation", "")
             if "participant" in data and data["participant"]:
                 self.current_name = data["participant"]
             if "participants" in data:
@@ -286,6 +298,7 @@ class AgentState(rx.State):
         self.participants = []
         self.votes = {}
         self.search_criteria = {}
+        self.explanation = ""
         yield AgentState.start_agent
 
     async def start_agent(self):
@@ -420,7 +433,7 @@ TOGGLE_RECORDING_JS = """
 CANVAS = "#E8E8EB"
 SURFACE = "#FFFFFF"
 INK = "#15151A"
-MUTED = "#8B8B94"
+MUTED = "#62626C"
 FAINT = "#C6C6CE"
 HAIRLINE = "rgba(21, 21, 26, 0.07)"
 TINT = "#F2F2F5"
@@ -517,6 +530,31 @@ def pill(content, accent=False, **props) -> rx.Component:
         white_space="nowrap",
         flex_shrink="0",
         **props,
+    )
+
+
+def mediator_note() -> rx.Component:
+    """The mediator's account of the shortlist, set above the question.
+
+    Deliberately quieter than the question below it: this is context for the
+    whole group, while the headline asks one named person to answer. Giving
+    them the same weight made the two read as one run-on sentence.
+    """
+    return rx.box(
+        rx.text(
+            AgentState.explanation,
+            font_size="clamp(0.95rem, 1.1vw, 1.1rem)",
+            font_weight="500",
+            line_height="1.45",
+            color=MUTED,
+            # Capped width was removed to allow the text to stretch the full width
+            max_width="100%",
+        ),
+        border_left=f"2px solid {PINK}",
+        padding_left="0.85rem",
+        margin_bottom="0.3rem",
+        width="100%",
+        animation="rise .5s ease-out",
     )
 
 
@@ -757,12 +795,23 @@ def agent_panel() -> rx.Component:
         ),
         rx.vstack(
             rx.cond(
+                AgentState.has_explanation,
+                mediator_note(),
+                rx.box(height="0px"),
+            ),
+            rx.cond(
                 AgentState.has_messages,
                 rx.cond(
                     AgentState.show_user_message,
                     rx.text(
                         AgentState.latest_message,
-                        font_size="clamp(1.8rem, 2.8vw, 3rem)",
+                        # Both have to fit above the rail, so the question
+                        # gives up some size when an explanation precedes it.
+                        font_size=rx.cond(
+                            AgentState.has_explanation,
+                            "clamp(1.35rem, 2vw, 2.1rem)",
+                            "clamp(1.8rem, 2.8vw, 3rem)",
+                        ),
                         font_weight="600",
                         letter_spacing="-0.025em",
                         line_height="1.18",
