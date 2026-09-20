@@ -145,9 +145,17 @@ Filters:
   a genre exclusion as a substitute; use unsupported.
 - Standalone years go in years; numeric date bounds in year_min/year_max.
   90s means 1990-1999. Classic means <=1980, recent means >=2015.
+  Years dictated as words are still years: write them as 4-digit integers.
+  'twenty fifteen' is 2015, 'nineteen ninety nine' is 1999, 'two thousand
+  ten' is 2010, 'twenty twenty four' is 2024. Filler words from speech
+  ('from the twenty fifteen') do not change the year.
 - Runtime bounds in integer minutes; 'under two hours' means minute_max=119.
   short means <100 minutes, standard 100-129, long >=130, epic >=150.
-  Do not infer runtime from a title.
+  An unqualified runtime is a MINIMUM, not a maximum: 'three hours of
+  duration', 'it's 3 hours long', and 'a two hour movie' mean
+  minute_min=180/180/120 with minute_max left null. Only set minute_max when
+  the user gives an explicit upper cue (under, at most, no more than, less
+  than, within). Do not infer runtime from a title.
 - min_rating is on the catalog 0-5 scale; 'highly rated' means >=4.0.
 - There is no audience criterion. 'With my kids' or 'with friends' adds no
   criteria: do not re-encode viewers as themes, genres, runtime, rating or
@@ -234,6 +242,142 @@ class Classification(BaseModel):
         return None, None
 
 
+_SPOKEN_UNITS = {
+    "one": 1,
+    "two": 2,
+    "three": 3,
+    "four": 4,
+    "five": 5,
+    "six": 6,
+    "seven": 7,
+    "eight": 8,
+    "nine": 9,
+}
+_SPOKEN_TEENS = {
+    "ten": 10,
+    "eleven": 11,
+    "twelve": 12,
+    "thirteen": 13,
+    "fourteen": 14,
+    "fifteen": 15,
+    "sixteen": 16,
+    "seventeen": 17,
+    "eighteen": 18,
+    "nineteen": 19,
+}
+_SPOKEN_TENS = {
+    "twenty": 20,
+    "thirty": 30,
+    "forty": 40,
+    "fifty": 50,
+    "sixty": 60,
+    "seventy": 70,
+    "eighty": 80,
+    "ninety": 90,
+}
+_YEAR_TAIL_WORDS = "|".join(
+    sorted(
+        {
+            *_SPOKEN_UNITS,
+            *_SPOKEN_TEENS,
+            *_SPOKEN_TENS,
+            "hundred",
+            "thousand",
+            "and",
+            "oh",
+            "zero",
+        },
+        key=len,
+        reverse=True,
+    )
+)
+_SPOKEN_YEAR = re.compile(
+    rf"\b(nineteen|twenty|two)((?:\s+(?:{_YEAR_TAIL_WORDS}))+)\b", re.IGNORECASE
+)
+# Nouns that prove a spoken number counts something other than a year.
+_NOT_A_YEAR = re.compile(
+    r"^\s*(?:hours?|hrs?|minutes?|mins?|seconds?|people|persons?|friends?|"
+    r"movies?|films?|stars?|dollars?|euros?|percent)\b",
+    re.IGNORECASE,
+)
+_RUNTIME_UNITS = r"hours?|hrs?|minutes?|mins?"
+# Cues that make a stated runtime a bound rather than the film's length.
+_RUNTIME_BOUND_CUES = re.compile(
+    r"\b(?:under|below|less|fewer|at\s+most|no\s+more|shorter|within|up\s+to|"
+    r"max|maximum|over|above|more|at\s+least|longer|min|minimum|between|from|"
+    r"and|or|to|plus)\s*$",
+    re.IGNORECASE,
+)
+_RUNTIME_TRAILING_CUES = re.compile(
+    r"^\s*(?:or\s+(?:less|fewer|more|longer|shorter)|max|maximum|minimum|"
+    r"at\s+most|at\s+least|tops)\b",
+    re.IGNORECASE,
+)
+_SPOKEN_RUNTIME = re.compile(
+    rf"\b({'|'.join(_SPOKEN_UNITS)}|{'|'.join(_SPOKEN_TEENS)}|"
+    rf"{'|'.join(_SPOKEN_TENS)})\s+(?={_RUNTIME_UNITS}\b)",
+    re.IGNORECASE,
+)
+
+
+def _spoken_two_digit(words: list[str]) -> tuple[int, int] | None:
+    """Parse leading number words into (value, words consumed)."""
+    if not words:
+        return None
+    head = words[0]
+    if head in _SPOKEN_TENS:
+        if len(words) > 1 and words[1] in _SPOKEN_UNITS:
+            return _SPOKEN_TENS[head] + _SPOKEN_UNITS[words[1]], 2
+        return _SPOKEN_TENS[head], 1
+    if head in _SPOKEN_TEENS:
+        return _SPOKEN_TEENS[head], 1
+    if head in {"oh", "zero"} and len(words) > 1 and words[1] in _SPOKEN_UNITS:
+        return _SPOKEN_UNITS[words[1]], 2
+    if head in _SPOKEN_UNITS:
+        return _SPOKEN_UNITS[head], 1
+    return None
+
+
+def spoken_numbers_to_digits(request: str) -> str:
+    """Rewrite dictated years and runtimes as digits.
+
+    Voice input arrives as words ("from the twenty fifteen", "three hours"),
+    which the downstream year and runtime regexes cannot read.
+    """
+
+    def replace_year(match: re.Match) -> str:
+        lead = match[1].casefold()
+        words = [word.casefold() for word in match[2].split()]
+        if lead == "two":
+            if not words or words[0] != "thousand":
+                return match[0]
+            base, rest = 2000, words[1:]
+        else:
+            base = 1900 if lead == "nineteen" else 2000
+            rest = words[1:] if words and words[0] == "hundred" else words
+        if rest and rest[0] == "and":
+            rest = rest[1:]
+        offset = _spoken_two_digit(rest)
+        if offset is None:
+            # "two thousand" on its own is a year; other leads need an offset.
+            if lead != "two" or rest:
+                return match[0]
+            value, consumed = 0, 0
+        else:
+            value, consumed = offset
+        year = base + value
+        if not 1900 <= year <= 2035:
+            return match[0]
+        leftover = " ".join(rest[consumed:])
+        if _NOT_A_YEAR.match(leftover or request[match.end() :]):
+            return match[0]
+        return f"{year} {leftover}".rstrip()
+
+    spoken = {**_SPOKEN_UNITS, **_SPOKEN_TEENS, **_SPOKEN_TENS}
+    text = _SPOKEN_YEAR.sub(replace_year, request)
+    return _SPOKEN_RUNTIME.sub(lambda m: f"{spoken[m[1].casefold()]} ", text)
+
+
 def validate_exclusions(request: str, entities: Entities) -> None:
     clauses = [
         clause
@@ -288,6 +432,45 @@ def validate_exclusions(request: str, entities: Entities) -> None:
             ):
                 values.append(value)
         setattr(entities, field, values)
+
+
+def validate_runtime_bounds(request: str, entities: Entities) -> None:
+    """Treat a plainly stated runtime as a floor, not a ceiling.
+
+    "It's three hours of duration" describes the film's length, so the only
+    safe reading is minute_min. Models default it to minute_max, which then
+    excludes every film of exactly that length and below it nothing else.
+    """
+    text = request.casefold()
+    exact = None
+    for match in re.finditer(rf"(\d+(?:\.\d+)?)\s*({_RUNTIME_UNITS})\b", text):
+        if _RUNTIME_BOUND_CUES.search(text[: match.start()]):
+            continue
+        if _RUNTIME_TRAILING_CUES.match(text[match.end() :]):
+            continue
+        minutes = float(match[1]) * (
+            60 if match[2].startswith(("hour", "hr")) else 1
+        )
+        exact = int(minutes)
+    if exact is None or entities.minute_min is not None:
+        return
+    if entities.minute_max in {None, exact}:
+        entities.minute_min = exact
+        entities.minute_max = None
+
+
+def recover_spoken_years(request: str, entities: Entities) -> None:
+    """Keep dictated years that the model dropped or could not spell."""
+    if entities.year_min is not None or entities.year_max is not None:
+        return
+    titles = " ".join(movie.title for movie in entities.movies).casefold()
+    for year_text in re.findall(r"\b(19\d{2}|20[0-3]\d)\b", request):
+        year = int(year_text)
+        if year in entities.years or year_text in titles:
+            continue
+        if any(movie.year == year for movie in entities.movies):
+            continue
+        entities.years.append(year)
 
 
 def validate_explicit_genres(request: str, entities: Entities) -> None:
@@ -467,13 +650,16 @@ class Classifier:
             ):
                 result.entities.genre_groups = [[genre] for genre in choices]
                 result.entities.genres = []
+        # Voice input spells years and runtimes out, so match the checks below
+        # against a digit form of the request.
+        spoken = spoken_numbers_to_digits(request)
         result.entities.years = [
             year
             for year in result.entities.years
-            if re.search(r"\b" + str(year) + r"\b", request)
+            if re.search(r"\b" + str(year) + r"\b", spoken)
         ]
         for relation, year_text in re.findall(
-            r"\b(after|before|since|through|until)\s+(\d{4})\b", request.casefold()
+            r"\b(after|before|since|through|until)\s+(\d{4})\b", spoken.casefold()
         ):
             year = int(year_text)
             if relation in {"after", "since"}:
@@ -483,6 +669,8 @@ class Classifier:
             result.entities.years = [
                 value for value in result.entities.years if value != year
             ]
+        recover_spoken_years(spoken, result.entities)
+        validate_runtime_bounds(spoken, result.entities)
         if len(
             re.findall(r"\b(seen|watched)\b", request.casefold())
         ) == 1 and re.search(

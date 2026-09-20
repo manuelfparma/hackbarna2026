@@ -247,6 +247,16 @@ def normalize_criteria(criteria: dict | None) -> dict:
             minutes = float(match[2]) * (60 if match[3].startswith("hour") else 1)
             field = "minute_max" if match[1] in {"under", "at most"} else "minute_min"
             normalized[field] = int(minutes) + (-1 if match[1] == "under" else 1 if match[1] == "over" else 0)
+            continue
+        # A bare length ("3 hours", "90 minutes long") states how long the film
+        # is, which only bounds the search from below.
+        bare = re.fullmatch(
+            r"(\d+(?:\.\d+)?) (minutes?|hours?)(?: long| of duration)?", text
+        )
+        if bare and normalized["minute_min"] is None and normalized["minute_max"] is None:
+            normalized["minute_min"] = int(
+                float(bare[1]) * (60 if bare[2].startswith("hour") else 1)
+            )
     return normalized
 
 
