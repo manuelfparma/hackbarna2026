@@ -1,66 +1,99 @@
-# Kinofiles
+# Kino Files: Project Documentation
 
-Kinofiles is a full-stack AI application designed to provide an intelligent movie recommendation experience. 
-
-The project is composed of three main pillars:
-1. **Data Management Pipeline:** Scripts to clean, process, and upload the Letterboxd Kaggle dataset into a Supabase database for Retrieval-Augmented Generation (RAG).
-2. **LLM Agent:** The core conversational intelligence layer powered by LangGraph.
-3. **Frontend:** An interactive user interface built with Reflex to seamlessly interact with the agent.
+This directory contains the entire source code for the Kino Files application. Kino Files is a full-stack AI application designed to provide an intelligent, hallucination-free movie recommendation experience for both individuals and groups.
 
 ---
 
-## 1. Data Management Pipeline
+## 1. Setup & Data Management
 
-This section details the scripts required to fetch the dataset, process it into a rich, RAG-friendly JSONL format, and populate your Supabase database.
+This section details the scripts required to fetch the dataset, process it into a rich, RAG-friendly format, and populate your Supabase database.
 
 ### Prerequisites
-
-**Kaggle Credentials (For Downloading Data)**
-You will need a Kaggle account and an API token to download the source dataset.
-1. Go to your [Kaggle Account Settings](https://www.kaggle.com/settings).
-2. Under the **API** section, click **Create New Token**.
-3. Place the downloaded `kaggle.json` file in `~/.kaggle/` (Linux/Mac) or `C:\Users\<User>\.kaggle\` (Windows).
-*(Alternatively, you can set the `KAGGLE_USERNAME` and `KAGGLE_KEY` environment variables.)*
-
-**Supabase Credentials (For Uploading Data)**
-1. Ensure you have a `.env` file in the `kinofiles` directory containing:
-   ```env
-   SUPABASE_URL="your-supabase-url"
-   SUPABASE_KEY="your-api-key"
-   ```
-
-### Setting Up the Database
-Before uploading the data, you must initialize the database table.
-1. Open the **SQL Editor** in your Supabase dashboard.
-2. Copy and execute the exact SQL query found in `data_management/create_schema.sql`.
-   *This script sets up the movies table, GIN indexes for array columns (genres, themes, actors), and the theme/description embedding tables plus match RPCs.*
+1. **Kaggle Credentials:** Create an API token from your Kaggle settings and place `kaggle.json` in `~/.kaggle/` (or set `KAGGLE_USERNAME` / `KAGGLE_KEY`).
+2. **Supabase Credentials:** Ensure you have a `.env` file containing `SUPABASE_URL` and `SUPABASE_KEY`.
 
 ### Running the Pipeline
-We use `uv` to manage dependencies. Run the following commands from this directory (`kinofiles`):
+Run the following commands using `uv` from the `kinofiles` directory:
 
-**Step 1: Clean and Build the Dataset**
+**1. Create the Database Schema:**
+Execute the SQL in `data_management/create_schema.sql` in your Supabase SQL Editor. This sets up the movies table, GIN indexes, vector embedding tables, and RPC functions.
+
+**2. Clean and Build the Dataset:**
 ```bash
 uv run python data_management/data_cleaning.py
 ```
-* **Downloads exactly what you need:** Bypasses 20GB+ of posters to fetch just the metadata.
-* **Pre-filters for Popularity:** Restricts the dataset to the top 1000 most popular films released since 2000.
-* **Aggregates and Cleans:** Consolidates 6 different CSVs into a single flat file, categorizes movie duration, filters for Primary Languages, and isolates the top 5 main actors.
-* **Exports:** Outputs the final processed records to `data/top_1000_movies.jsonl`.
+*Downloads the top 1000 popular films since 2000, aggregates metadata, and exports to a flat JSONL file.*
 
-**Step 2: Upload to Supabase**
+**3. Upload to Supabase:**
 ```bash
 uv run python data_management/upload_supabase.py
 ```
-* Authenticates with Supabase using your `.env` secrets.
-* Reads the generated `.jsonl` file and uploads the records to your `movies` table in chunks of 250.
-* Uses `upsert` logic, meaning you can safely stop and rerun the script at any time without triggering duplicate errors.
+*Uploads the records to your Supabase `movies` table using upsert logic.*
 
 ---
 
-## 2. LLM Agent
-*(Agent configuration and execution instructions go here)*
+## 2. System Overview & Capabilities
+
+Kino Files operates on a core conversational loop: **discover a movie, refine suggestions, ask questions, and make a choice.**
+
+### Operating Modes
+*   **Group Mediator (`agent.orchestrator`):** Asks multiple users for their preferences, merges them into a single group brief, and conducts a numbered voting round to settle on a movie.
+*   **Standalone Agent (`agent.recomedation_agent`):** A single-user conversational agent for free-form discovery, refining, and factual lookups.
+
+### Core Capabilities
+*   **Semantic Mood Search:** ("Something melancholy about family") Uses vector search.
+*   **Plot Identification:** ("An animated movie about a rat in Paris") Uses description matching to guess the movie.
+*   **Similar-To Search:** ("Like The Dark Knight") Finds plot neighbors of a seed film.
+*   **Direct Filters:** ("A 90s French comedy") Strict SQL filtering on genres, languages, and decades.
+*   **Factual Lookups:** ("Who directed Inception?") Answers directly from the catalog row without losing your active movie shortlist.
+*   *(Note: Watchlists, two-film comparisons, and explicit content exclusions are not supported).*
 
 ---
 
-## 3. Frontend
-*(Frontend configuration and execution instructions go here)*
+## 3. Algorithm & Retrieval Decisions
+
+Kino Files uses a strict Retrieval-Augmented Generation (RAG) pipeline. We separate retrieval from generation to eliminate LLM hallucinations.
+
+### Dual Vector Embeddings (Mistral 1024D + pgvector)
+*   **`themes_embeddings`:** We embed unique theme strings (e.g., "Epic heroes"). Used for general mood queries, keeping matching fast and semantically accurate.
+*   **`descriptions_embeddings`:** We embed the specific plot description of every movie. Used for "similar to X" searches or when the user provides specific plot terms.
+
+### Hybrid Ranking Logic
+For theme-based searches, we use a custom ranker:
+1.  **Match:** Find top themes via `pgvector` cosine similarity.
+2.  **Filter:** Keep only themes within a `0.10` similarity margin of the very best match (dropping unrelated tail results).
+3.  **Weight:** Apply reciprocal rank weighting (`1, 1/2, 1/3...`) so hitting the closest theme heavily outweighs hitting several weaker ones (preventing heavily-tagged blockbusters from always winning).
+4.  **Tie-Breaker:** Sort matched films by rating, then alphabetically.
+
+### The Narrator (Nebius Qwen)
+Capabilities strictly return raw structured data (titles, themes). The `ReplyComposer` (Nebius LLM at `temp=0.4`) takes this data and synthesizes a natural response of up to three sentences. **Rules:** Never invent films, never read database IDs/scores aloud, and never list titles in the text (the UI renders them separately).
+
+---
+
+## 4. Agent Workflows (LangGraph)
+
+### Group Orchestrator Flow
+`welcome -> collect_preferences -> mediate -> group_vote -> refine (retry)`
+The orchestrator extracts participant names, classifies one request per person, and merges the criteria. It retrieves options and initiates a numbered vote. Ties or zero-votes lead to a refinement round (capped at three rounds).
+
+### Standalone Flow
+`classify -> capability -> reply -> turn (interrupt) -> select / exit`
+The agent persists state across the conversation. Hard constraints (genres) act as strict SQL `AND` filters. Soft constraints (moods, themes) are fed into the vector query. The classifier handles `add`, `replace`, `reset`, or `keep` logic based on user input (e.g., "also" vs "instead"). 
+
+### Running the Agents
+```bash
+# Run Group Mediation
+uv run python -m agent.orchestrator
+
+# Run Solo Chat
+uv run python -m agent.recomedation_agent
+```
+
+---
+
+## 5. Frontend & Voice Integration
+
+The user-facing layer of Kino Files is located in the `frontend/` directory and is built to deliver a seamless, living-room-ready experience.
+
+*   **Full-Stack with Reflex:** We used [Reflex](https://reflex.dev/) to build the entire web application. This allowed us to write the frontend entirely in Python, deeply integrating it with our LangGraph backend while providing a highly interactive, reactive UI. The interface separates narrative chat from the active movie shortlist, allowing users to easily make selections via a numbered UI (ideal for TV remotes).
+*   **Voice Execution via SLNG:** Typing on a TV is a poor experience, so Kino Files is voice-enabled. We integrated the **SLNG** platform as our audio execution layer. SLNG bridges the Reflex frontend and the agent backend by routing user audio input to Deepgram Nova-3 (Speech-to-Text) and synthesizing the agent's textual responses back into natural voice using Deepgram Aura-2 (Text-to-Speech).
