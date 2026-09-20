@@ -66,6 +66,12 @@ class CriteriaTests(unittest.TestCase):
         self.assertEqual(normalized["genres"], ["Crime"])
         self.assertEqual(normalized["themes"], ["Heist"])
 
+    def test_group_query_deduplicates_joined_requests_against_normalized_themes(self):
+        query = build_theme_query(
+            "heist; HEIST; found family; ;", {"themes": ["heist", "found family"]}
+        )
+        self.assertEqual(query, "heist; found family")
+
     def test_theme_query_combines_latest_request_with_remembered_moods(self):
         query = build_theme_query(
             "also make it exciting",
@@ -78,7 +84,7 @@ class CriteriaTests(unittest.TestCase):
 
         self.assertIn("also make it exciting", query)
         self.assertIn("found family", query)
-        self.assertIn("friends", query)
+        self.assertNotIn("friends", query)
         self.assertNotIn("Comedy", query)
 
 
