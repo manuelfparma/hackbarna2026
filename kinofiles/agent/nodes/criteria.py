@@ -160,9 +160,16 @@ def has_catalog_filters(criteria: dict | None) -> bool:
 
 
 def build_theme_query(request: str, criteria: dict | None) -> str:
-    """Compose one semantic query while leaving genres as strict filters."""
+    """Compose one semantic query while leaving genres as strict filters.
+
+    The request arrives pre-joined (the mediator concatenates every
+    participant's raw utterance with "; "), while the criteria below hold the
+    classifier's normalized reading of those same utterances. Splitting the
+    request back apart is what lets the dedupe at the bottom collapse the two
+    copies — against one joined blob it can only compare the whole string.
+    """
     normalized = normalize_criteria(criteria)
-    parts = [request.strip()]
+    parts = [segment.strip() for segment in request.split(";")]
     parts.extend(normalized["themes"])
     parts.extend(normalized["audience"])
     parts.extend(normalized["time_periods"])
