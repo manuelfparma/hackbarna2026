@@ -70,6 +70,17 @@ CATALOG_ARRAY_FIELDS = (
     "streaming",
 )
 
+# Constraints that identify specific records rather than a kind of film.
+LOOKUP_FIELDS = (
+    "directors",
+    "actors",
+    "languages",
+    "streaming",
+    "years",
+    "exclude_actors",
+    "exclude_directors",
+)
+
 CATALOG_GENRES = (
     "Action",
     "Adventure",
@@ -236,6 +247,16 @@ def normalize_criteria(criteria: dict | None) -> dict:
             minutes = float(match[2]) * (60 if match[3].startswith("hour") else 1)
             field = "minute_max" if match[1] in {"under", "at most"} else "minute_min"
             normalized[field] = int(minutes) + (-1 if match[1] == "under" else 1 if match[1] == "over" else 0)
+            continue
+        # A bare length ("3 hours", "90 minutes long") states how long the film
+        # is, which only bounds the search from below.
+        bare = re.fullmatch(
+            r"(\d+(?:\.\d+)?) (minutes?|hours?)(?: long| of duration)?", text
+        )
+        if bare and normalized["minute_min"] is None and normalized["minute_max"] is None:
+            normalized["minute_min"] = int(
+                float(bare[1]) * (60 if bare[2].startswith("hour") else 1)
+            )
     return normalized
 
 
@@ -306,6 +327,27 @@ def has_catalog_filters(criteria: dict | None) -> bool:
             "exclude_directors",
         )
     ) or any(normalized[field] is not None for field in SCALAR_FIELDS)
+
+
+def is_catalog_lookup(criteria: dict | None) -> bool:
+    """True when the brief names catalog records instead of describing a film.
+
+    Genres are deliberately not a lookup signal. "A comedy" is an open
+    recommendation: answered from the catalog it sorts every Comedy-tagged row
+    by rating and hands the same eight titles to everyone, ignoring what was
+    actually said. It belongs on the semantic path, where the genre still
+    applies as a hard filter. A named person, year, or service has nothing to
+    rank semantically, so it stays here.
+    """
+    normalized = normalize_criteria(criteria)
+    if any(normalized[field] for field in LOOKUP_FIELDS):
+        return True
+    if normalized["year_min"] is not None or normalized["year_max"] is not None:
+        return True
+    if normalized["genres"] or normalized["genre_groups"] or normalized["themes"]:
+        return False
+    # Runtime or rating bounds alone leave nothing to embed.
+    return has_catalog_filters(normalized)
 
 
 def build_theme_query(request: str, criteria: dict | None) -> str:

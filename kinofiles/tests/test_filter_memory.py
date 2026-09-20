@@ -72,14 +72,29 @@ class RecordingQuery:
 
 
 class RecordingSupabase:
+    MOVIES = [
+        {
+            "name": "The Nice Guys",
+            "rating": 4.0,
+            "themes": ["Funny"],
+            "description": "",
+        },
+        {"name": "Hot Fuzz", "rating": 3.9, "themes": ["Funny"], "description": ""},
+    ]
+
     def __init__(self):
         self.calls = []
 
     def table(self, _name):
-        return RecordingQuery(
-            [{"name": "The Nice Guys"}, {"name": "Hot Fuzz"}],
-            self.calls,
-        )
+        return RecordingQuery(self.MOVIES, self.calls)
+
+    def rpc(self, _name, _params):
+        return RecordingQuery([{"theme": "Funny", "similarity": 0.8}], self.calls)
+
+
+class FakeEmbeddings:
+    def embed_query(self, _text):
+        return [0.0] * 1024
 
 
 class FilterMemoryGraphTests(unittest.TestCase):
@@ -91,6 +106,10 @@ class FilterMemoryGraphTests(unittest.TestCase):
         )
         supabase = RecordingSupabase()
         agent.direct_request_handler.supabase = supabase
+        # A bare genre is ranked semantically, so the same catalog filter now
+        # arrives through the theme recommender.
+        agent.theme_recommender._supabase = supabase
+        agent.theme_recommender._embeddings = FakeEmbeddings()
         config = {"configurable": {"thread_id": "criteria-two-turn"}}
 
         first = agent.graph.invoke(

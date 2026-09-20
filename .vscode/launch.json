@@ -13,6 +13,17 @@
       "envFile": "${workspaceFolder}/kinofiles/.env"
     },
     {
+      "name": "Python: orchestrator",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "agent.orchestrator",
+      "python": "${workspaceFolder}/kinofiles/.venv/bin/python",
+      "cwd": "${workspaceFolder}/kinofiles",
+      "console": "integratedTerminal",
+      "justMyCode": true,
+      "envFile": "${workspaceFolder}/kinofiles/.env"
+    },
+    {
       "name": "Python: theme_embeddings_pipeline",
       "type": "debugpy",
       "request": "launch",

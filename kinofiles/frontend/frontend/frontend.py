@@ -30,7 +30,9 @@ class AgentState(rx.State):
     votes: dict[str, str] = {}
     current_name: str = ""
 
-    # The mediator's account of the shortlist it just built.
+    # The mediator's account of the shortlist it just built. Addressed to the
+    # whole group, unlike the question in `messages`, which asks one person to
+    # answer -- so it gets its own line above rather than being run into it.
     explanation: str = ""
 
     # The titles the agent last put on the table, the art found for them, and
@@ -257,6 +259,8 @@ class AgentState(rx.State):
             self.is_done = data.get("status") == "done"
             if "criteria" in data:
                 self.search_criteria = data["criteria"]
+            # Cleared when absent, or the reasoning behind one shortlist
+            # would still be on screen over the next one.
             self.explanation = data.get("explanation", "")
             if "participant" in data and data["participant"]:
                 self.current_name = data["participant"]
@@ -443,7 +447,7 @@ TOGGLE_RECORDING_JS = """
 CANVAS = "#E8E8EB"
 SURFACE = "#FFFFFF"
 INK = "#15151A"
-MUTED = "#8B8B94"
+MUTED = "#62626C"
 FAINT = "#C6C6CE"
 HAIRLINE = "rgba(21, 21, 26, 0.07)"
 TINT = "#F2F2F5"
@@ -544,7 +548,12 @@ def pill(content, accent=False, **props) -> rx.Component:
 
 
 def mediator_note() -> rx.Component:
-    """The mediator's account of the shortlist, set above the question."""
+    """The mediator's account of the shortlist, set above the question.
+
+    Deliberately quieter than the question below it: this is context for the
+    whole group, while the headline asks one named person to answer. Giving
+    them the same weight made the two read as one run-on sentence.
+    """
     return rx.box(
         rx.text(
             AgentState.explanation,
@@ -552,6 +561,7 @@ def mediator_note() -> rx.Component:
             font_weight="500",
             line_height="1.45",
             color=MUTED,
+            # Capped width was removed to allow the text to stretch the full width
             max_width="100%",
         ),
         border_left=f"2px solid {PINK}",
@@ -636,21 +646,6 @@ def status_bar(back: bool = False) -> rx.Component:
             ),
             rx.hstack(
                 participants_badge,
-                rx.hstack(
-                    rx.icon("mic", size=14, color=MUTED),
-                    rx.text(AgentState.voice_name, font_size="0.8rem", font_weight="500", color=MUTED),
-                    spacing="2",
-                    align="center",
-                    bg=SURFACE,
-                    border=f"1px solid {HAIRLINE}",
-                    box_shadow=SHADOW_SM,
-                    padding="0.3em 0.8em",
-                    border_radius="999px",
-                    cursor="pointer",
-                    on_click=AgentState.toggle_voice_name,
-                    _hover={"box_shadow": SHADOW, "transform": "translateY(-1px)"},
-                    transition="all .2s ease",
-                ),
                 spacing="2",
                 align="center",
             ),
@@ -809,6 +804,8 @@ def agent_panel() -> rx.Component:
                     AgentState.show_user_message,
                     rx.text(
                         AgentState.latest_message,
+                        # Both have to fit above the rail, so the question
+                        # gives up some size when an explanation precedes it.
                         font_size=rx.cond(
                             AgentState.has_explanation,
                             "clamp(1.35rem, 2vw, 2.1rem)",
@@ -1285,15 +1282,16 @@ def favourite_apps_row() -> rx.Component:
 def hero() -> rx.Component:
     return rx.vstack(
         rx.heading(
-            "Tell me what you're in the mood for.",
+            "Find your next favorite film with Kino Files.",
             size="9",
             weight="bold",
             letter_spacing="-0.035em",
             line_height="1.05",
+            max_width="20ch",
         ),
         rx.text(
-            "Your mood in, the perfect movie out.",
-            max_width="100%",
+            "A conversational agent that listens to your group preferences and filters a real movie catalog to deliver reliable, personalized recommendations.",
+            max_width="60ch",
             font_size="1.05rem",
             color=MUTED,
             line_height="1.6",
@@ -1305,7 +1303,7 @@ def hero() -> rx.Component:
                 spacing="2",
                 align="center",
             ),
-            on_click=AgentState.open_tv_agent,
+            on_click=rx.redirect("/agent"),
             bg=PINK,
             color="white",
             height="52px",
@@ -1350,6 +1348,47 @@ def index() -> rx.Component:
             rx.box(flex="1"),
             hero(),
             rx.box(height="1.5rem"),
+            rx.vstack(
+                rx.heading("Team Members", size="6", margin_top="2rem", margin_bottom="1rem"),
+                rx.hstack(
+                    rx.vstack(
+                        rx.avatar(fallback="AF", size="5", radius="full", src="https://ui-avatars.com/api/?name=Anna+Falceto+Pinyol&background=random&rounded=true"),
+                        rx.text("Anna Falceto", font_size="0.8rem", color=MUTED),
+                        align="center",
+                    ),
+                    rx.vstack(
+                        rx.avatar(fallback="ML", size="5", radius="full", src="https://ui-avatars.com/api/?name=Marti+La+Rosa+Ramos&background=random&rounded=true"),
+                        rx.text("Martí La Rosa", font_size="0.8rem", color=MUTED),
+                        align="center",
+                    ),
+                    rx.vstack(
+                        rx.avatar(fallback="MF", size="5", radius="full", src="https://ui-avatars.com/api/?name=Manuel+Felix+Parma&background=random&rounded=true"),
+                        rx.text("Manuel Félix", font_size="0.8rem", color=MUTED),
+                        align="center",
+                    ),
+                    spacing="6",
+                ),
+                
+                rx.heading("🏗️ Architecture & Implementation", size="6", margin_top="2rem", margin_bottom="1rem"),
+                rx.text("1. The Vector Database: Supabase with pgvector for semantic search."),
+                rx.text("2. The Orchestrator: Stateful agent using LangGraph."),
+                rx.text("3. The Voice Layer: Reflex frontend using SLNG (Deepgram STT & Aura-2 TTS)."),
+                rx.text("4. The Narrator: Nebius Qwen for conversational responses."),
+                
+                rx.heading("🏆 Hackathon Challenges Addressed", size="6", margin_top="2rem", margin_bottom="1rem"),
+                rx.heading("1. Titan OS: The Conversational TV Experience", size="4", margin_top="1rem"),
+                rx.text("Stateful conversational quality, grounded recommendations, and TV-optimized interface."),
+                
+                rx.heading("2. SLNG: The Voice Execution Layer", size="4", margin_top="1rem"),
+                rx.text("SLNG bridges the Reflex frontend and LangGraph backend for low-latency STT and TTS."),
+                
+                rx.heading("3. Nebius: Building with Token Factory", size="4", margin_top="1rem"),
+                rx.text("Used Nebius Qwen as the dedicated voice of the agent to ensure consistent persona without exposing internal data."),
+                align="start",
+                spacing="2",
+                color=MUTED,
+            ),
+            rx.box(height="3rem"),
             favourite_apps_row(),
             rx.box(flex="0.4"),
             spacing="5",
@@ -1383,5 +1422,6 @@ app = rx.App(
         "https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap"
     ],
 )
-app.add_page(index, title="KinoFiles OS")
+app.add_page(index, title="KinoFiles OS", route="/")
+app.add_page(index, title="KinoFiles Landing", route="/landing")
 app.add_page(agent_tv_panel, route="/agent", title="KinoFiles Agent TV", on_load=AgentState.reset_agent)

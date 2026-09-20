@@ -5,28 +5,27 @@ welcome -> collect_preferences (loop) -> mediate -> group_vote -> {goodbye | ref
 """
 
 import logging
-import re
-from typing import TypedDict
-from dotenv import load_dotenv
-
-from langgraph.checkpoint.memory import InMemorySaver
-from langgraph.graph import END, StateGraph
-from langgraph.types import Command, interrupt
-
-from pydantic import BaseModel, Field
+from typing import Literal, TypedDict
 
 from agent.io.turn import prompt
 from agent.llm import build_llm, build_mistral_llm
-from agent.nodes.classifier import Classifier, ClassificationError
+from agent.nodes.classifier import ClassificationError, Classifier
 from agent.nodes.criteria import (
-    has_catalog_filters,
+    clear_criteria,
+    empty_criteria,
+    is_catalog_lookup,
     merge_criteria,
     merge_group_criteria,
-    empty_criteria,
 )
+from agent.nodes.criteria_commands import CriteriaCommand, parse_criteria_command
 from agent.nodes.direct_request import DirectRequestHandler
+from agent.nodes.reply import MAX_HISTORY_TURNS, ReplyComposer
 from agent.nodes.theme_recommender import ThemeRecommender
-from agent.nodes.reply import ReplyComposer, MAX_HISTORY_TURNS
+from dotenv import load_dotenv
+from langgraph.checkpoint.memory import InMemorySaver
+from langgraph.graph import END, StateGraph
+from langgraph.types import Command, interrupt
+from pydantic import BaseModel, Field
 
 logger = logging.getLogger(__name__)
 
@@ -36,11 +35,25 @@ def _compact(value: dict | None) -> dict:
     return {key: item for key, item in (value or {}).items() if item}
 
 
-class ParticipantsExtract(BaseModel):
-    """Extract participant names."""
+class WelcomeExtract(BaseModel):
+    """Decide whether the first message names people watching, or is a movie request."""
 
+    kind: Literal["participants", "movie_request"] = Field(
+        description=(
+            "participants: the user is listing people who will watch together "
+            "(friends, family, roommates in the room). "
+            "movie_request: the user is asking for films — including naming "
+            "actors, directors, titles, genres, or moods. Famous performer "
+            "names without social/watching-together context are movie_request, "
+            "never participants."
+        )
+    )
     names: list[str] = Field(
-        description="The extracted names of the people participating, properly capitalized."
+        default_factory=list,
+        description=(
+            "Watcher names when kind=participants, properly capitalized. "
+            "Empty when kind=movie_request. Never put actors or directors here."
+        ),
     )
 
 
@@ -76,9 +89,7 @@ class State(TypedDict):
 class OrquestratorAgent:
     def __init__(self, llm=None, reply_llm=None):
         self.llm = llm or build_llm()
-        self.reply_llm = reply_llm or (
-            llm if llm is not None else build_llm(temperature=0.4)
-        )
+        self.reply_llm = reply_llm or (llm if llm is not None else build_llm(temperature=0.4))
         self.classifier = Classifier(build_mistral_llm())
         self.direct_request_handler = DirectRequestHandler(self.llm)
         self.theme_recommender = ThemeRecommender()
@@ -99,10 +110,18 @@ class OrquestratorAgent:
         return graph.compile(checkpointer=InMemorySaver())
 
     def welcome(self, state: State) -> Command:
-        msg = "Welcome to KinoFiles! What do you feel like watching? (If you're with friends, tell me their names too!)"
-        if (state.get('result') or {}).get('kind') in {'classification_error', 'clarification'}:
+        msg = (
+            "Welcome to KinoFiles! What do you feel like watching? "
+            "If you're with friends, tell me their names. "
+            "If you want films with a particular actor, say the actor — "
+            "not the people in the room."
+        )
+        if (state.get("result") or {}).get("kind") in {
+            "classification_error",
+            "clarification",
+        }:
             msg = f"{state['response']}\n{msg}"
-        extractor = self.reply_llm.with_structured_output(ParticipantsExtract)
+        extractor = self.reply_llm.with_structured_output(WelcomeExtract)
 
         while True:
             text = interrupt(prompt(msg))
@@ -110,49 +129,29 @@ class OrquestratorAgent:
                 return self._welcome_clarification()
             try:
                 result = extractor.invoke(
-                    f"Extract the participant names from this input: '{text}'."
+                    "The user just started a movie-night session. Classify "
+                    "their first message.\n\n"
+                    f"Input: {text!r}\n\n"
+                    "kind=participants only when they are naming people who "
+                    "will watch with them (e.g. 'I'm here with Alice and Bob', "
+                    "'Me, Marta and Joan', first names of friends).\n"
+                    "kind=movie_request when they name actors, directors, "
+                    "titles, genres, moods, or otherwise ask for films "
+                    "(e.g. 'Tom Hanks', 'something with Scarlett Johansson "
+                    "and Brad Pitt', 'a comedy'). Well-known film people "
+                    "without watching-together context are movie_request.\n"
+                    "Return watcher names only for kind=participants."
                 )
-                names = result.names
+                kind = result.kind
+                names = list(result.names or [])
             except Exception:
-                raw_names = re.split(r",|\band\b", text)
-                names = [n.strip().title() for n in raw_names if n.strip()]
+                # Do not treat comma-separated words as watchers; the
+                # classifier can recover actors, titles, and moods.
+                kind = "movie_request"
+                names = []
 
-            if len(names) == 0:
-                # No name detected at all: assume solo, and treat what they
-                # typed as their movie preference instead of discarding it.
-                person = ""
-                try:
-                    classify_result = self.classifier.classify(text)
-                except ClassificationError:
-                    return self._classification_failure("welcome")
-                if classify_result.intent not in {
-                    "recommendation",
-                    "theme_recommendation",
-                    "direct_request",
-                    "prefer",
-                    "feedback",
-                }:
-                    return self._welcome_clarification()
-                entities = classify_result.entities.model_dump()
-                criteria = merge_criteria(
-                    empty_criteria(),
-                    entities,
-                    classify_result.criteria_action,
-                    classify_result.clear_fields,
-                )
-                return Command(
-                    goto="collect_preferences",
-                    update={
-                        "participants": [person],
-                        "current_participant": 1,
-                        "preferences": {person: [text]},
-                        "per_person_criteria": {person: criteria},
-                        "history": [],
-                        "round": 1,
-                        "response": "Got it, just you tonight.",
-                        "result": {},
-                    },
-                )
+            if kind != "participants" or not names:
+                return self._start_movie_request(text)
             if len(names) == 1:
                 confirmation = f"Got it, just you ({names[0]}) tonight."
                 break
@@ -175,9 +174,47 @@ class OrquestratorAgent:
             },
         )
 
+    def _start_movie_request(self, text: str) -> Command:
+        """Solo session: keep the first message as the search, skip name collection."""
+        person = "You"
+        try:
+            classify_result = self.classifier.classify(text)
+        except ClassificationError:
+            return self._classification_failure("welcome")
+        if classify_result.intent not in {
+            "recommendation",
+            "theme_recommendation",
+            "direct_request",
+            "prefer",
+            "feedback",
+        }:
+            return self._welcome_clarification()
+        entities = classify_result.entities.model_dump()
+        criteria = merge_criteria(
+            empty_criteria(),
+            entities,
+            classify_result.criteria_action,
+            classify_result.clear_fields,
+        )
+        return Command(
+            goto="collect_preferences",
+            update={
+                "participants": [person],
+                "current_participant": 1,
+                "preferences": {person: [text]},
+                "per_person_criteria": {person: criteria},
+                "history": [],
+                "round": 1,
+                "response": "Got it, just you tonight.",
+                "result": {},
+            },
+        )
+
     @staticmethod
     def _welcome_clarification():
-        message = "Please give the participants' names or a movie preference to start."
+        message = (
+            "Please give the names of people watching with you, " "or a movie preference (including actors) to start."
+        )
         return Command(
             goto="welcome",
             update={
@@ -201,6 +238,122 @@ class OrquestratorAgent:
             },
         )
 
+    def _cleared_group(self, state: State) -> dict:
+        """Every place a stale constraint can hide, emptied.
+
+        Clearing `group_criteria` is not enough: `mediate` embeds the
+        participants' raw utterances alongside the structured brief, so the
+        accumulated text has to go too or the next search still chases what
+        the group just abandoned.
+        """
+        names = state.get("participants", [])
+        return {
+            "group_criteria": {},
+            "per_person_criteria": {name: empty_criteria() for name in names},
+            "preferences": {name: [] for name in names},
+            "group_feedback": [],
+            "history": [],
+            "movies": [],
+            "votes": {},
+            "show_options": False,
+            "inline_feedback": "",
+            "round": 1,
+        }
+
+    def _pruned_group(self, state: State, fields: tuple[str, ...]) -> dict:
+        """Drop one field group everywhere, including the cached wording."""
+        update = self._cleared_group(state)
+        update.pop("round")
+        update["group_criteria"] = clear_criteria(state.get("group_criteria"), fields)
+        update["per_person_criteria"] = {
+            name: clear_criteria(criteria, fields)
+            for name, criteria in (state.get("per_person_criteria") or {}).items()
+        }
+        return update
+
+    def _group_control(
+        self,
+        state: State,
+        control: CriteriaCommand,
+        speaker: str | None = None,
+        idx: int | None = None,
+    ) -> Command:
+        """Apply an explicit reset or removal before the classifier sees it.
+
+        Deterministic on purpose, so "start over" still works while the
+        classifier is unavailable, matching the solo agent's contract.
+        """
+        if control.action == "reset":
+            update = self._cleared_group(state)
+            message = "I've cleared everything."
+        else:
+            update = self._pruned_group(state, control.fields)
+            message = f"I've dropped the {', '.join(control.fields)} filter."
+        logger.info(
+            "group_control | action=%s | fields=%s | remainder=%r",
+            control.action,
+            control.fields,
+            control.remainder,
+        )
+        update["response"] = message
+        update["result"] = {
+            "kind": "criteria_changed",
+            "action": control.action,
+            "fields": list(control.fields),
+            "titles": [],
+            "error": None,
+        }
+
+        mid_interview = speaker is not None and idx is not None
+
+        if not control.remainder:
+            if mid_interview:
+                # They spent their turn on a control instead of a preference,
+                # so ask again — from the top when the slate was wiped.
+                update["current_participant"] = 0 if control.action == "reset" else idx
+                return Command(goto="collect_preferences", update=update)
+            if control.action == "remove":
+                return Command(goto="mediate", update=update)
+            update["current_participant"] = 0
+            return Command(goto="collect_preferences", update=update)
+
+        try:
+            classified = self.classifier.classify(control.remainder)
+        except ClassificationError:
+            # The state change stands; only the new request is lost.
+            failure = self._classification_failure(
+                "collect_preferences" if mid_interview else "refine"
+            )
+            update.update(failure.update)
+            update["response"] = f"{message} {failure.update['response']}"
+            if mid_interview:
+                update["current_participant"] = idx
+            return Command(goto=failure.goto, update=update)
+
+        criteria = merge_criteria(
+            empty_criteria(),
+            classified.entities.model_dump(),
+            classified.criteria_action,
+            classified.clear_fields,
+        )
+        if mid_interview:
+            # Keep the interview order: the speaker just answered, so carry on
+            # with whoever is next instead of asking them again.
+            update["preferences"] = {
+                **update["preferences"],
+                speaker: [control.remainder],
+            }
+            update["per_person_criteria"] = {
+                **update["per_person_criteria"],
+                speaker: criteria,
+            }
+            update["current_participant"] = idx + 1
+            return Command(goto="collect_preferences", update=update)
+
+        update["group_criteria"] = criteria
+        update["group_feedback"] = [control.remainder]
+        return Command(goto="mediate", update=update)
+
     def collect_preferences(self, state: State) -> Command:
         names = state["participants"]
         idx = state["current_participant"]
@@ -210,12 +363,18 @@ class OrquestratorAgent:
 
         person = names[idx]
         msg = f"{person}, what are you in the mood for?" if person else "What are you in the mood for?"
-        
         prefix = state.get("response", "") if idx == 0 else ""
-        if (state.get("result") or {}).get("kind") == "classification_error":
+        if (state.get("result") or {}).get("kind") in {
+            "classification_error",
+            "criteria_changed",
+        }:
             prefix = state.get("response", "")
             
         text = interrupt(prompt(msg, participant=person, explanation=prefix))
+
+        control = parse_criteria_command(text)
+        if control:
+            return self._group_control(state, control, speaker=person, idx=idx)
 
         # Classify
         try:
@@ -226,9 +385,7 @@ class OrquestratorAgent:
         action = result.criteria_action
 
         current_criteria = state["per_person_criteria"][person]
-        new_criteria = merge_criteria(
-            current_criteria, entities, action, result.clear_fields
-        )
+        new_criteria = merge_criteria(current_criteria, entities, action, result.clear_fields)
 
         prefs = list(state["preferences"][person])
         prefs.append(text)
@@ -282,12 +439,14 @@ class OrquestratorAgent:
         )
         logger.info("mediate | round=%s | merged_query=%r", round_no, req)
 
-        if has_catalog_filters(merged) and not merged.get("themes"):
-            # They want a specific director/actor/etc without mood qualifiers
+        if is_catalog_lookup(merged):
+            # A named director/actor/year/service: rating order is the only
+            # ranking available, and the group's wording adds nothing.
             route = "direct_request"
             result = self.direct_request_handler.handle(None, None, criteria=merged)
         else:
-            # Re-use theme_recommender for semantics (or semantics + strict genre bounds)
+            # Everything else — genres, moods, or an open ask — is ranked
+            # against what the group said, with genres kept as hard bounds.
             route = "theme_recommender"
             result = self.theme_recommender.recommend(req, feedback=[], criteria=merged)
 
@@ -354,9 +513,7 @@ class OrquestratorAgent:
                 if v and v != "none":
                     tally[v] = tally.get(v, 0) + 1
             if not tally:
-                return Command(
-                    goto="refine", update={"response": ""}
-                )
+                return Command(goto="refine", update={"response": ""})
 
             # Check for tie
             max_votes = max(tally.values())
@@ -375,6 +532,11 @@ class OrquestratorAgent:
         explanation = state.get("response", "") if idx == 0 else ""
 
         ans = interrupt(prompt(msg, movies, participant=person, explanation=explanation)).strip()
+
+        control = parse_criteria_command(ans)
+        if control:
+            # Abandoning the search outranks finishing the ballot.
+            return self._group_control(state, control)
 
         vote_val = "none"
         inline_fb = ""
@@ -408,6 +570,10 @@ class OrquestratorAgent:
             explanation = state.get("response", "")
             movies = state.get("movies", [])
             ans = interrupt(prompt(msg, options=movies, explanation=explanation))
+
+        control = parse_criteria_command(ans)
+        if control:
+            return self._group_control(state, control)
 
         group_fb = list(state.get("group_feedback", []))
         group_fb.append(ans)
@@ -443,9 +609,7 @@ class OrquestratorAgent:
     def goodbye(self, state: State) -> Command:
         return Command(
             goto=END,
-            update={
-                "farewell": f"{state['choice']} wins! Enjoy the movie, everyone. 🎬"
-            },
+            update={"farewell": f"{state['choice']} wins! Enjoy the movie, everyone. 🎬"},
         )
 
     def run(self, thread_id: str = "1") -> str:
@@ -466,9 +630,7 @@ if __name__ == "__main__":
     import logging
 
     load_dotenv()
-    logging.basicConfig(
-        level=logging.INFO, format="%(levelname)s %(name)s | %(message)s"
-    )
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s | %(message)s")
     logging.getLogger("httpx").setLevel(logging.WARNING)
     logging.getLogger("httpx2").setLevel(logging.WARNING)
     # The Hub relays server-side notices (e.g. the unauthenticated-request
