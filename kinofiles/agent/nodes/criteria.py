@@ -1,7 +1,10 @@
 """Persistent, normalized search criteria for multi-turn recommendations."""
 
+import logging
 from copy import deepcopy
 from typing import Literal
+
+logger = logging.getLogger(__name__)
 
 CriteriaAction = Literal["add", "replace", "reset", "keep"]
 
@@ -157,9 +160,16 @@ def has_catalog_filters(criteria: dict | None) -> bool:
 
 
 def build_theme_query(request: str, criteria: dict | None) -> str:
-    """Compose one semantic query while leaving genres as strict filters."""
+    """Compose one semantic query while leaving genres as strict filters.
+
+    The request arrives pre-joined (the mediator concatenates every
+    participant's raw utterance with "; "), while the criteria below hold the
+    classifier's normalized reading of those same utterances. Splitting the
+    request back apart is what lets the dedupe at the bottom collapse the two
+    copies — against one joined blob it can only compare the whole string.
+    """
     normalized = normalize_criteria(criteria)
-    parts = [request.strip()]
+    parts = [segment.strip() for segment in request.split(";")]
     parts.extend(normalized["themes"])
     parts.extend(normalized["audience"])
     parts.extend(normalized["time_periods"])
@@ -199,12 +209,26 @@ def merge_group_criteria(per_person: dict[str, dict]) -> tuple[dict, str]:
         if intersect:
             merged["genres"] = list(intersect)
             genre_note = f"Found common genres: {', '.join(intersect)}."
+            logger.info(
+                "merge_group | genres=intersection | sets=%s | merged=%s",
+                [sorted(genre_set) for genre_set in all_genres_sets],
+                sorted(intersect),
+            )
         else:
             union = set.union(*all_genres_sets)
             merged["genres"] = list(union)
             genre_note = f"Combined different genre preferences: {', '.join(union)}."
+            # The catalog applies genres with array containment (AND), so a
+            # union of disjoint genres narrows the search instead of relaxing it.
+            logger.warning(
+                "merge_group | genres=union(no overlap) | sets=%s | merged=%s "
+                "| downstream filter is AND, expect few or zero matches",
+                [sorted(genre_set) for genre_set in all_genres_sets],
+                sorted(union),
+            )
     else:
         genre_note = "No specific genre constraints."
+        logger.info("merge_group | genres=none | no genre filter applied")
 
     for field in CRITERIA_FIELDS:
         if field == "genres":
@@ -215,5 +239,10 @@ def merge_group_criteria(per_person: dict[str, dict]) -> tuple[dict, str]:
         merged[field] = _dedupe(all_vals)
 
     notes = f"Merged preferences for {len(per_person)} people. {genre_note}"
+    logger.info(
+        "merge_group | people=%s | merged=%s",
+        list(per_person),
+        {field: value for field, value in merged.items() if value},
+    )
     return merged, notes
 

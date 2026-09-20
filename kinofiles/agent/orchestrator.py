@@ -4,6 +4,7 @@ Flow:
 welcome -> collect_preferences (loop) -> mediate -> group_vote -> {goodbye | refine -> mediate}
 """
 
+import logging
 import re
 from typing import TypedDict
 from dotenv import load_dotenv
@@ -21,6 +22,14 @@ from agent.nodes.criteria import has_catalog_filters, merge_criteria, merge_grou
 from agent.nodes.direct_request import DirectRequestHandler
 from agent.nodes.theme_recommender import ThemeRecommender
 from agent.nodes.reply import ReplyComposer, MAX_HISTORY_TURNS
+
+logger = logging.getLogger(__name__)
+
+
+def _compact(value: dict | None) -> dict:
+    """Drop empty fields so log lines only show what the group actually asked for."""
+    return {key: item for key, item in (value or {}).items() if item}
+
 
 class ParticipantsExtract(BaseModel):
     """Extract participant names."""
@@ -91,13 +100,36 @@ class OrquestratorAgent:
                     f"Extract the participant names from this input: '{text}'."
                 )
                 names = result.names
-                confirmation = f"I detected {len(names)} people: {', '.join(names)}."
             except Exception:
                 raw_names = re.split(r',|\band\b', text)
                 names = [n.strip().title() for n in raw_names if n.strip()]
+
+            if len(names) == 0:
+                # No name detected at all: assume solo, and treat what they
+                # typed as their movie preference instead of discarding it.
+                person = "You"
+                classify_result = self.classifier.classify(text)
+                entities = classify_result.entities.model_dump()
+                criteria = merge_criteria(
+                    empty_criteria(), entities, classify_result.criteria_action
+                )
+                return Command(
+                    goto="collect_preferences",
+                    update={
+                        "participants": [person],
+                        "current_participant": 1,
+                        "preferences": {person: [text]},
+                        "per_person_criteria": {person: criteria},
+                        "history": [],
+                        "round": 1,
+                        "response": "Got it, just you tonight.",
+                    }
+                )
+            if len(names) == 1:
+                confirmation = f"Got it, just you ({names[0]}) tonight."
+                break
+            if len(names) <= 4:
                 confirmation = f"I detected {len(names)} people: {', '.join(names)}."
-            
-            if 1 <= len(names) <= 4:
                 break
             msg = "Please give between 1 and 4 names. Let's try again:"
             
@@ -147,11 +179,16 @@ class OrquestratorAgent:
         )
 
     def mediate(self, state: State) -> Command:
+        round_no = state.get("round", 1)
         merged = state.get("group_criteria")
         if not merged:
             merged, notes = merge_group_criteria(state["per_person_criteria"])
+            merge_source = "fresh"
         else:
             notes = "Updated search based on group feedback."
+            # Rounds 2+ carry the accumulated group criteria; the per-person
+            # criteria are never re-consulted after the first merge.
+            merge_source = "carried"
         
         # Flatten feedback from all people
         all_feedback = list(state.get("group_feedback", []))
@@ -160,14 +197,40 @@ class OrquestratorAgent:
             
         req = "; ".join(all_feedback) if all_feedback else "recommend something"
         
+        for person in state["participants"]:
+            logger.info(
+                "mediate | round=%s | input | %s=%s",
+                round_no,
+                person,
+                _compact(state["per_person_criteria"].get(person)),
+            )
+        logger.info(
+            "mediate | round=%s | merge=%s | merged_criteria=%s | notes=%r",
+            round_no,
+            merge_source,
+            _compact(merged),
+            notes,
+        )
+        logger.info("mediate | round=%s | merged_query=%r", round_no, req)
+        
         if has_catalog_filters(merged) and not merged.get("themes"):
             # They want a specific director/actor/etc without mood qualifiers
+            route = "direct_request"
             result = self.direct_request_handler.handle(None, None, criteria=merged)
         else:
             # Re-use theme_recommender for semantics (or semantics + strict genre bounds)
+            route = "theme_recommender"
             result = self.theme_recommender.recommend(req, feedback=[], criteria=merged)
             
         movies = result.get("titles", [])
+        logger.info(
+            "mediate | round=%s | route=%s | kind=%s | titles=%s | error=%s",
+            round_no,
+            route,
+            result.get("kind"),
+            movies,
+            result.get("error"),
+        )
         
         # Compose response
         response = self.reply_composer.compose(
@@ -262,6 +325,13 @@ class OrquestratorAgent:
         
         result = self.classifier.classify(ans)
         new_group = merge_criteria(state["group_criteria"], result.entities.model_dump(), result.criteria_action)
+        logger.info(
+            "refine | round=%s | feedback=%r | action=%s | new_group_criteria=%s",
+            state.get("round", 1),
+            ans,
+            result.criteria_action,
+            _compact(new_group),
+        )
         
         return Command(
             goto="mediate",
@@ -298,4 +368,8 @@ if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s | %(message)s")
     logging.getLogger("httpx").setLevel(logging.WARNING)
     logging.getLogger("httpx2").setLevel(logging.WARNING)
+    # The Hub relays server-side notices (e.g. the unauthenticated-request
+    # nag) through this logger, which also carries its own handler, so the
+    # same line lands twice. Silencing the logger suppresses both copies.
+    logging.getLogger("huggingface_hub").setLevel(logging.ERROR)
     OrquestratorAgent().run()

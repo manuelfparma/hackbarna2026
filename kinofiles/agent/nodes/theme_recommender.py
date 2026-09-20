@@ -1,10 +1,14 @@
 """Theme-based recommendation: nearest themes via pgvector, then movies."""
 
+import logging
+
 from data_management.theme_embeddings_pipeline import EMBEDDING_MODEL, _client, _load_env
 from langchain_mistralai import MistralAIEmbeddings
 
 from agent.nodes.catalog import resolve_movie
 from agent.nodes.criteria import build_theme_query, normalize_criteria
+
+logger = logging.getLogger(__name__)
 
 MATCH_COUNT = 10
 MOVIE_LIMIT = 8
@@ -62,6 +66,11 @@ class ThemeRecommender:
         notes = [item for item in (feedback or []) if item and item != request]
         if notes:
             query_text = f"{query_text}; {'; '.join(notes)}"
+        logger.info(
+            "theme_search | embedded_query=%r | genre_filter=%s",
+            query_text,
+            genres or None,
+        )
         vector = self._embeddings.embed_query(query_text)
         try:
             matches = (
@@ -96,8 +105,14 @@ class ThemeRecommender:
         # handful of weaker ones, otherwise broad blockbusters always win.
         weights = {row["theme"]: 1 / rank for rank, row in enumerate(kept, start=1)}
 
+        logger.info(
+            "theme_search | matched_themes=%s",
+            [(row["theme"], round(row["similarity"], 3)) for row in kept],
+        )
         movie_query = supabase.table("movies").select("name, rating, themes, description")
         if genres:
+            # Array containment: a movie must carry EVERY listed genre.
+            logger.info("theme_search | genres @> %s (AND)", genres)
             movie_query = movie_query.contains("genres", genres)
         try:
             movies = movie_query.execute().data or []
@@ -176,6 +191,12 @@ class ThemeRecommender:
         parts.extend(criteria["time_periods"])
         parts.extend(item for item in (feedback or []) if item and item != request)
         query_text = "; ".join(dict.fromkeys(part for part in parts if part))
+        logger.info(
+            "similar_search | seed=%r | embedded_query=%r | genre_filter=%s",
+            seed["name"],
+            query_text,
+            genres or None,
+        )
 
         vector = self._embeddings.embed_query(query_text)
         try:
@@ -214,7 +235,14 @@ class ThemeRecommender:
                 for row in rows
                 if wanted <= {g.casefold() for g in (row.get("genres") or [])}
             }
+            before = len(candidates)
             candidates = [row for row in candidates if row["movie_id"] in allowed]
+            logger.info(
+                "similar_search | genre filter %s (AND) kept %s/%s candidates",
+                genres,
+                len(candidates),
+                before,
+            )
 
         top = candidates[:MOVIE_LIMIT]
         titles = [row["name"] for row in top]
