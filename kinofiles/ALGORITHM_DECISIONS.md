@@ -86,7 +86,7 @@ The classifier uses structured output, so only declared intents can route. After
 
 Strings deduplicate case-insensitively. Genres are canonicalized to the catalog's exact labels, including aliases such as `sci-fi` → `Science Fiction`.
 
-Explicit genres are hard constraints. Supabase receives all accumulated genres in one array-containment filter, so `Comedy` + `Action` requires both. Themes, moods, audience, and time-period language remain semantic: they form one embedding query, while accumulated genres pre-filter the movies ranked against the matched themes. If the intersection is empty, the result reports that instead of dropping a constraint.
+Explicit genres are hard constraints. Supabase receives all accumulated genres in one array-containment filter, so `Comedy` + `Action` requires both. Themes, moods, and time-period language contribute to the semantic query: they form one embedding query, while accumulated genres pre-filter the movies ranked against the matched themes. If the intersection is empty, the result reports that instead of dropping a constraint.
 
 A turn classified as `feedback` but carrying a new genre is rerouted to catalog lookup; a new theme (or a reaction with no new catalog filter) goes through theme search with the accumulated brief and prior reactions.
 
@@ -96,7 +96,7 @@ A turn classified as `feedback` but carrying a new genre is rerouted to catalog 
 
 Both paths resolve a spoken title to a `movies` row through `nodes/catalog.py`'s `resolve_movie`: exact case-insensitive match first, then best-rated substring match, with ReDial-style `"(2001)"` suffixes stripped. A mentioned `year` gets a shot at disambiguating substring hits before rating does.
 
-- **`similar_to`** — a `seed`/`liked` movie in criteria triggers `match_descriptions` on the seed's own description text, with any refinement themes/audience/feedback appended to the embedded query (“like Super Troopers but darker”). Genres post-filter candidates in Python because the RPC signature predates them. If the seed doesn't resolve or has no description, the turn falls back to theme search, where the title text still lands in the query.
+- **`similar_to`** — a `seed`/`liked` movie in criteria triggers `match_descriptions` on the seed's own description text, with any refinement themes/feedback appended to the embedded query (“like Super Troopers but darker”). Genres post-filter candidates in Python because the RPC signature predates them. If the seed doesn't resolve or has no description, the turn falls back to theme search, where the title text still lands in the query.
 
 - **`movie_fact`** — `asked_about` titles fetch their catalog row and the reply layer narrates it. Facts never write `movies` or `show_options`, so asking “who directed it?” mid-shortlist doesn't clobber the pending pick.
 
